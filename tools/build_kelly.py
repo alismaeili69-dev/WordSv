@@ -1,4 +1,4 @@
-"""Build data/kelly.json: the B2 and C1 words from the Swedish Kelly list,
+"""Build data/kelly.json: the A1–C1 words from the Swedish Kelly list,
 enriched with English translations, inflections and example phrases from Folkets lexikon.
 
 Sources (download these yourself and pass the paths):
@@ -15,7 +15,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
-LEVELS = ("B2", "C1")
+LEVELS = ("A1", "A2", "B1", "B2", "C1")
 
 POS_MAP = {  # Kelly POS -> (Folkets class, label shown in the app)
     "noun-en": ("nn", "noun"), "noun-ett": ("nn", "noun"), "noun": ("nn", "noun"), "noun-en/-ett": ("nn", "noun"),
@@ -78,7 +78,11 @@ def build(kelly_csv, folkets_xml, out_path):
     import os
     here = os.path.dirname(os.path.abspath(__file__))
     # Hand-written translations for Kelly words that Folkets lexikon lacks
-    extra = json.load(open(os.path.join(here, "kelly_extra_translations.json"), encoding="utf-8"))
+    import glob
+    extra = {}
+    for path in sorted(glob.glob(os.path.join(here, "kelly_extra_translations*.json"))):
+        extra.update(json.load(open(path, encoding="utf-8")))
+    lemma_fix = extra.pop("_lemma_overrides", {})
     # Words already in the hand-written list (data/words.json) are skipped: those have better examples
     try:
         own = {w["sv"].lower() for w in json.load(open(os.path.join(here, "..", "data", "words.json"), encoding="utf-8"))}
@@ -92,6 +96,8 @@ def build(kelly_csv, folkets_xml, out_path):
         kpos = r["POS"].strip()
         fclass, label = POS_MAP.get(kpos, ("", kpos))
         lemma, entries = None, []
+        if r["ID"] in lemma_fix:
+            r["Lemma"] = lemma_fix[r["ID"]]
         for v in lemma_variants(r["Lemma"]):
             cands = folk.get(v.lower(), [])
             if cands:
@@ -167,7 +173,6 @@ def build(kelly_csv, folkets_xml, out_path):
 
     # Hand-written example sentences (tools/examples/*.tsv):
     # kelly_id <TAB> sv1 <TAB> en1 <TAB> sv2 <TAB> en2 [<TAB> corrected English translation]
-    import glob
     written = {}
     for path in sorted(glob.glob(os.path.join(here, "examples", "*.tsv"))):
         for line in open(path, encoding="utf-8"):
@@ -185,7 +190,7 @@ def build(kelly_csv, folkets_xml, out_path):
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("[\n" + ",\n".join(json.dumps(w, ensure_ascii=False) for w in words) + "\n]\n")
-    print(f"{len(rows)} Kelly B2/C1 rows -> {len(words)} words written, {len(missing)} without a dictionary match")
+    print(f"{len(rows)} Kelly rows -> {len(words)} words written, {len(missing)} without a dictionary match")
     return words, missing
 
 

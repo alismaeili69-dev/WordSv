@@ -6,7 +6,8 @@ const KEY = 'wordsv-v1';
 const DEFAULT = {
   progress: {},          // wordId -> card (see srs.js)
   custom: [],            // words you added yourself
-  settings: { dailyLimit: 50, level: 'all', autoSpeak: false },
+  // levels: which CEFR levels appear in Learn (null = not chosen yet -> show the level picker)
+  settings: { dailyLimit: 50, level: 'all', autoSpeak: false, levels: null },
   skipped: [],           // wordIds skipped in Learn (shown again later)
 };
 
@@ -15,11 +16,12 @@ export function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return structuredClone(DEFAULT);
     const data = JSON.parse(raw);
-    return {
-      ...structuredClone(DEFAULT),
-      ...data,
-      settings: { ...DEFAULT.settings, ...(data.settings || {}) },
-    };
+    const settings = { ...DEFAULT.settings, ...(data.settings || {}) };
+    // People who used WordSv before levels existed were learning B2/C1 words
+    if (!data.settings || !('levels' in data.settings)) {
+      settings.levels = data.progress && Object.keys(data.progress).length ? ['B2', 'C1'] : null;
+    }
+    return { ...structuredClone(DEFAULT), ...data, settings };
   } catch {
     return structuredClone(DEFAULT);
   }

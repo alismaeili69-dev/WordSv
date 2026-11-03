@@ -26,9 +26,19 @@ function dueList() {
     .map(([id]) => id);
 }
 
+const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1'];
+const LEVEL_INFO = { A1: 'Beginner', A2: 'Elementary', B1: 'Intermediate', B2: 'Upper intermediate', C1: 'Advanced' };
+function enabledLevels() { return state.settings.levels && state.settings.levels.length ? state.settings.levels : LEVELS; }
+function levelRank(l) { const i = LEVELS.indexOf(l); return i < 0 ? 99 : i; }
+
 function learnList() {
-  const lvl = state.settings.level;
-  const fresh = allWords().filter((w) => !state.progress[w.id] && (lvl === 'all' || w.level === lvl));
+  const enabled = enabledLevels();
+  const lvl = enabled.includes(state.settings.level) ? state.settings.level : 'all';
+  const fresh = allWords()
+    .filter((w) => !state.progress[w.id] && (enabled.includes(w.level) || !LEVELS.includes(w.level)) && (lvl === 'all' || w.level === lvl))
+    .map((w, i) => [w, i])
+    .sort((a, b) => levelRank(a[0].level) - levelRank(b[0].level) || a[1] - b[1]) // easiest enabled level first
+    .map(([w]) => w);
   const skipped = new Set(state.skipped);
   // Not-yet-skipped words first, skipped ones after
   return [...fresh.filter((w) => !skipped.has(w.id)), ...fresh.filter((w) => skipped.has(w.id))];
@@ -153,18 +163,61 @@ function renderReview() {
 }
 
 // ---------- Learn tab ----------
+function levelToggles(selected) {
+  const counts = {};
+  allWords().forEach((w) => { counts[w.level] = (counts[w.level] || 0) + 1; });
+  return `<div class="level-grid">${LEVELS.map((l) => `
+      <button type="button" class="level-toggle ${selected.includes(l) ? 'on' : ''}" data-toggle-level="${l}" aria-pressed="${selected.includes(l)}">
+        <b>${l}</b><span>${LEVEL_INFO[l]}</span><small>${counts[l] || 0} words</small>
+      </button>`).join('')}</div>`;
+}
+
+function wireLevelToggles(root, selected, onChange) {
+  root.querySelectorAll('[data-toggle-level]').forEach((b) => b.onclick = () => {
+    const l = b.dataset.toggleLevel;
+    const i = selected.indexOf(l);
+    if (i >= 0) selected.splice(i, 1); else selected.push(l);
+    selected.sort((a, c) => levelRank(a) - levelRank(c));
+    onChange(selected);
+  });
+}
+
+function renderLevelPicker() {
+  const selected = [...(state.settings.levels || [])];
+  const draw = () => {
+    view.innerHTML = `
+      <section class="panel picker">
+        <h2>Välkommen till WordSv! 🇸🇪</h2>
+        <p class="muted">Which levels do you want to learn? Tap to choose one or more. You can change this any time in Settings.</p>
+        ${levelToggles(selected)}
+        <button class="btn primary wide" id="startLearning" ${selected.length ? '' : 'disabled'}>Start learning</button>
+      </section>`;
+    wireLevelToggles(view, selected, draw);
+    view.querySelector('#startLearning').onclick = () => {
+      state.settings.levels = selected;
+      state.settings.level = 'all';
+      session.learnIndex = 0;
+      persist();
+      renderLearn();
+    };
+  };
+  draw();
+}
+
 function renderLearn() {
+  if (!state.settings.levels) return renderLevelPicker();
   const list = learnList();
-  const lvl = state.settings.level;
-  const levelChips = ['all', 'B2', 'C1'].map((l) =>
-    `<button class="chip ${lvl === l ? 'on' : ''}" data-level="${l}">${l === 'all' ? 'All' : l}</button>`).join('');
+  const enabled = enabledLevels();
+  const lvl = enabled.includes(state.settings.level) ? state.settings.level : 'all';
+  const levelChips = (enabled.length > 1 ? ['all', ...enabled] : enabled).map((l) =>
+    `<button class="chip ${lvl === l || enabled.length === 1 ? 'on' : ''}" data-level="${l}">${l === 'all' ? 'All' : l}</button>`).join('');
   const addedToday = Object.values(state.progress).filter((c) => c.added === todayStr()).length;
 
   if (list.length === 0) {
     view.innerHTML = `
       <div class="chips">${levelChips}</div>
       <section class="empty"><div class="big">📚</div><h2>No new words here</h2>
-      <p>You've added every word${lvl === 'all' ? '' : ' at ' + lvl}. Add your own in Settings.</p></section>`;
+      <p>You've added every word${lvl === 'all' ? ' in your levels' : ' at ' + lvl}. Turn on more levels or add your own words in Settings.</p></section>`;
     wireLevelChips();
     return;
   }
@@ -279,13 +332,19 @@ function renderSettings() {
     </section>
 
     <section class="panel">
+      <h3>Levels in Learn</h3>
+      <p class="small muted">New words come from the levels you turn on, easiest first. Words you've already added keep coming up in Review.</p>
+      <div id="levelSettings">${levelToggles(enabledLevels())}</div>
+    </section>
+
+    <section class="panel">
       <h3>Add your own word</h3>
       <form id="addForm" class="form">
         <input name="sv" placeholder="Swedish word *" required>
         <input name="en" placeholder="English translation *" required>
         <input name="forms" placeholder="Forms (e.g. en bil, bilen, bilar)">
         <select name="pos"><option value="">Word type</option><option>noun</option><option>verb</option><option>adjective</option><option>adverb</option><option>expression</option></select>
-        <select name="level"><option>B2</option><option>C1</option></select>
+        <select name="level">${LEVELS.map((l) => `<option ${l === 'B2' ? 'selected' : ''}>${l}</option>`).join('')}</select>
         <input name="ex1" placeholder="Example sentence (Swedish)">
         <input name="ex1en" placeholder="Example translation (English)">
         <input name="ex2" placeholder="2nd example (Swedish)">
@@ -308,6 +367,18 @@ function renderSettings() {
     <p class="small muted center">WordSv · ${allWords().length} words in the bank<br>
       Word list: <a href="https://spraakbanken.gu.se/en/resources/kelly" target="_blank" rel="noopener">Swedish Kelly list</a> (Språkbanken Text, CC BY 4.0).
       Translations &amp; examples: <a href="https://folkets-lexikon.csc.kth.se/folkets/" target="_blank" rel="noopener">Folkets lexikon</a> (CC BY-SA 2.5).</p>`;
+
+  const levelBox = view.querySelector('#levelSettings');
+  const chosen = [...enabledLevels()];
+  const redrawLevels = (sel) => {
+    if (!sel.length) { sel.push(...enabledLevels()); toast('Keep at least one level on'); }
+    state.settings.levels = [...sel];
+    session.learnIndex = 0;
+    persist();
+    levelBox.innerHTML = levelToggles(sel);
+    wireLevelToggles(levelBox, sel, redrawLevels);
+  };
+  wireLevelToggles(levelBox, chosen, redrawLevels);
 
   view.querySelector('#limit').onchange = (e) => { s.dailyLimit = Math.max(5, Number(e.target.value) || 50); persist(); };
   view.querySelector('#autospeak').onchange = (e) => { s.autoSpeak = e.target.checked; persist(); };
