@@ -47,7 +47,7 @@ python3 -m http.server 8000
 
 ## Deploy (GitHub Pages)
 
-Repo **Settings → Pages → Build and deployment → Source: Deploy from a branch → `main` / `(root)`**.
+Repo **Settings → Pages → Build and deployment → Source: GitHub Actions**. After that, every push to `main` publishes the app automatically (see `.github/workflows/deploy.yml`). The workflow also generates the PNG icons with `tools/make_icons.py`.
 
 ## Structure
 
