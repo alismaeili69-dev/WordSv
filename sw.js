@@ -1,9 +1,9 @@
 // Offline support: network first (so updates arrive), cached copy when offline.
-const CACHE = 'wordsv-v1';
+const CACHE = 'wordsv-v2';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
   'src/app.js', 'src/srs.js', 'src/storage.js', 'src/swipe.js',
-  'data/words.json', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
+  'data/words.json', 'data/kelly.json', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (e) => {

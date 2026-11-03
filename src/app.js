@@ -89,7 +89,7 @@ function cardHTML(w, { revealed, mode, card }) {
       ${w.forms ? `<div class="forms">${esc(w.forms)}</div>` : ''}
       <div class="answer">
         <div class="en">${esc(w.en)}</div>
-        <ul class="examples">${examples}</ul>
+        ${examples ? `<ul class="examples">${examples}</ul>` : ''}
       </div>
       <div class="tap-hint">Tap to show the translation</div>
     </div>`;
@@ -305,7 +305,9 @@ function renderSettings() {
       </div>
       <button class="btn danger" id="reset">Reset everything</button>
     </section>
-    <p class="small muted center">WordSv · ${allWords().length} words in the bank</p>`;
+    <p class="small muted center">WordSv · ${allWords().length} words in the bank<br>
+      Word list: <a href="https://spraakbanken.gu.se/en/resources/kelly" target="_blank" rel="noopener">Swedish Kelly list</a> (Språkbanken Text, CC BY 4.0).
+      Translations &amp; examples: <a href="https://folkets-lexikon.csc.kth.se/folkets/" target="_blank" rel="noopener">Folkets lexikon</a> (CC BY-SA 2.5).</p>`;
 
   view.querySelector('#limit').onchange = (e) => { s.dailyLimit = Math.max(5, Number(e.target.value) || 50); persist(); };
   view.querySelector('#autospeak').onchange = (e) => { s.autoSpeak = e.target.checked; persist(); };
@@ -355,8 +357,10 @@ document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('c
 
 async function init() {
   try {
-    const res = await fetch('data/words.json');
-    bank = await res.json();
+    const files = ['data/words.json', 'data/kelly.json'];
+    const lists = await Promise.all(files.map((f) => fetch(f).then((r) => r.json()).catch(() => [])));
+    const seen = new Set();
+    bank = lists.flat().filter((w) => (seen.has(w.id) ? false : seen.add(w.id)));
   } catch {
     bank = [];
   }
