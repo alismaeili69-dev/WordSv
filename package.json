@@ -1,0 +1,9 @@
+{
+  "name": "wordsv",
+  "private": true,
+  "type": "module",
+  "description": "WordSv – Swedish vocabulary PWA. No build step; this file only exists to run the tests.",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

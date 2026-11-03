@@ -52,3 +52,9 @@ export function review(card, knew, today = todayStr()) {
 export function isDue(card, today = todayStr()) {
   return card.due <= today;
 }
+
+// "I already know this" in Learn: skip the first steps and see the word again in 2 weeks
+export const KNOWN_STAGE = 5;
+export function knownCard(today = todayStr()) {
+  return { stage: KNOWN_STAGE, due: addDays(today, INTERVALS[KNOWN_STAGE]), added: today, last: null, reviews: 0, lapses: 0, mastered: false, known: true };
+}

@@ -9,7 +9,12 @@ A WordUp-style app for learning Swedish vocabulary at every level (A1–C1) with
   - Swipe right: the word moves to the next step.
   - Swipe left: the word goes 2 steps back and comes up again tomorrow.
   - After the 180-day step, the word is marked as mastered.
-- **My words**: search your words and see each word's progress and next review date.
+- **My words**: search your words and see each word's progress and next review date. Switch to **All words** to search the whole bank (Swedish or English) and add words directly.
+- **Stats**: daily streak, reviews per day, what's coming up in the next 7 days, how strong your words are, and progress per level.
+- **Undo**: every swipe can be taken back for a few seconds (handy after a mis-swipe).
+- **I know it**: in Learn, marks a word you already know; it starts at step 6 and comes back in 2 weeks.
+- **Review direction**: Swedish → English, English → Swedish, or mixed (Settings).
+- **Keyboard** (web on a computer): ← / → to swipe, space to reveal, K = I know it, U = undo.
 - **Settings**: turn levels on/off for Learn, daily review limit, auto-read aloud, add your own words, export/import a backup.
 
 Progress is stored in your browser on that device (`localStorage`). Export a backup now and then.
@@ -49,6 +54,14 @@ Edit `data/words.json`. Each entry looks like this:
 
 `id` must be unique and must never change (your progress is linked to it). You can also add words from inside the app, in Settings.
 
+## Tests
+
+```bash
+npm test   # Node 18+; tests the review schedule and stats logic
+```
+
+The GitHub Pages workflow runs the tests before every deploy.
+
 ## Run locally
 
 ```bash
@@ -69,7 +82,9 @@ manifest.webmanifest  PWA metadata
 sw.js                 service worker (offline)
 src/app.js            views: Learn, Review, My words, Settings
 src/srs.js            spaced-repetition logic
-src/storage.js        save / export / import
+src/storage.js        save / export (share sheet) / import
+src/stats.js          streaks, forecast, accuracy (pure functions)
+tests/                unit tests (node --test)
 src/swipe.js          swipe gestures
 data/words.json       word bank
 icons/                app icons

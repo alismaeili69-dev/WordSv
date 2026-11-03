@@ -1,8 +1,8 @@
 // Offline support: network first (so updates arrive), cached copy when offline.
-const CACHE = 'wordsv-v5';
+const CACHE = 'wordsv-v6';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest',
-  'src/app.js', 'src/srs.js', 'src/storage.js', 'src/swipe.js',
+  'src/app.js', 'src/srs.js', 'src/storage.js', 'src/swipe.js', 'src/stats.js',
   'data/words.json', 'data/kelly.json', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 
