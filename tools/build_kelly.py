@@ -50,6 +50,8 @@ def lemma_variants(raw):
 
 def noun_forms(marker, lemma, infl, kpos=""):
     article = marker if marker in ("en", "ett") else {"noun-en": "en", "noun-ett": "ett"}.get(kpos, "")
+    if not article and not infl:
+        return ""
     parts = [f"{article} {lemma}".strip()] + infl[:2]
     return ", ".join(parts)
 
@@ -162,6 +164,24 @@ def build(kelly_csv, folkets_xml, out_path):
             "examples": examples,
             "source": "kelly",
         })
+
+    # Hand-written example sentences (tools/examples/*.tsv):
+    # kelly_id <TAB> sv1 <TAB> en1 <TAB> sv2 <TAB> en2 [<TAB> corrected English translation]
+    import glob
+    written = {}
+    for path in sorted(glob.glob(os.path.join(here, "examples", "*.tsv"))):
+        for line in open(path, encoding="utf-8"):
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) >= 5:
+                written[cols[0]] = cols
+    for w in words:
+        cols = written.get(w["id"][len("kelly-"):])
+        if not cols:
+            continue
+        mine = [{"sv": cols[1], "en": cols[2]}, {"sv": cols[3], "en": cols[4]}]
+        w["examples"] = (mine + w["examples"])[:3]
+        if len(cols) >= 6 and cols[5].strip():
+            w["en"] = cols[5].strip()
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("[\n" + ",\n".join(json.dumps(w, ensure_ascii=False) for w in words) + "\n]\n")
