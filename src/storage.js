@@ -10,6 +10,7 @@ const DEFAULT = {
   settings: { dailyLimit: 50, level: 'all', autoSpeak: false, levels: null, direction: 'sv-en' },
   skipped: [],           // wordIds skipped in Learn (shown again later)
   log: {},               // 'YYYY-MM-DD' -> { reviews, correct, added } for stats and streaks
+  deleted: {},           // wordId -> time removed (so removals sync to other devices)
 };
 
 export function load() {
@@ -70,6 +71,7 @@ export async function importFile(file) {
     settings: { ...DEFAULT.settings, ...(data.settings || {}) },
     skipped: Array.isArray(data.skipped) ? data.skipped : [],
     log: data.log && typeof data.log === 'object' ? data.log : {},
+    deleted: data.deleted && typeof data.deleted === 'object' ? data.deleted : {},
   };
 }
 

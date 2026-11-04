@@ -17,7 +17,14 @@ A WordUp-style app for learning Swedish vocabulary at every level (A1–C1) with
 - **Keyboard** (web on a computer): ← / → to swipe, space to reveal, K = I know it, U = undo.
 - **Settings**: turn levels on/off for Learn, daily review limit, auto-read aloud, add your own words, export/import a backup.
 
-Progress is stored in your browser on that device (`localStorage`). Export a backup now and then.
+Progress is stored in your browser on that device (`localStorage`). Optionally, **sign in with Google** (Settings → Account & sync, or on the welcome screen) to back up your progress and sync it between devices. See [PRIVACY.md](PRIVACY.md).
+
+## Sign-in & sync (Firebase)
+
+- Google sign-in uses Firebase Authentication; progress is stored in Cloud Firestore, one document per user at `users/{uid}`.
+- `src/firebase-config.js` holds the public web config. `firestore.rules` holds the security rules (paste them into Firebase console → Firestore Database → Rules → Publish).
+- Sync merges instead of overwriting: every word has a change time, removals leave a tombstone, and the newest change wins per word (`src/merge.js`, tested in `tests/merge.test.js`). Syncs run a few seconds after changes, when the app opens or comes back to the foreground, and on “Sync now”.
+- The Firebase SDK is loaded from Google's CDN only when someone signs in, so the app stays light for everyone else.
 
 ## Install on iPhone
 
@@ -84,6 +91,10 @@ src/app.js            views: Learn, Review, My words, Settings
 src/srs.js            spaced-repetition logic
 src/storage.js        save / export (share sheet) / import
 src/stats.js          streaks, forecast, accuracy (pure functions)
+src/merge.js          merging progress between devices (pure functions)
+src/sync.js           Google sign-in and Firestore sync
+src/firebase-config.js Firebase project config (public)
+firestore.rules       database security rules
 tests/                unit tests (node --test)
 src/swipe.js          swipe gestures
 data/words.json       word bank

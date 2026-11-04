@@ -2,6 +2,8 @@ import { INTERVALS, todayStr, newCard, knownCard, review, isDue, daysBetween } f
 import * as store from './storage.js';
 import { makeSwipeable } from './swipe.js';
 import { streakDays, bestStreak, lastDays, forecast, accuracy } from './stats.js';
+import { mergeStates } from './merge.js';
+import * as sync from './sync.js';
 
 const view = document.getElementById('view');
 const statsEl = document.getElementById('stats');
@@ -13,13 +15,56 @@ let index = new Map();    // id -> word (built-in + custom)
 let tab = 'review';
 let session = { reviewedToday: 0, learnIndex: 0, wordsMode: 'mine', wordsQuery: '' };
 let undoTimer = null;
+let syncStatus = { ...sync.status };
+const settingsKey = () => JSON.stringify({ ...state.settings, t: 0 });
+let lastSettings = settingsKey();
 
 const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1'];
 const LEVEL_INFO = { A1: 'Beginner', A2: 'Elementary', B1: 'Intermediate', B2: 'Upper intermediate', C1: 'Advanced' };
 
 const esc = (s = '') => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-function persist() { store.save(state); updateChrome(); }
+function persist() {
+  // remember when settings changed, so the newest settings win when syncing devices
+  const k = settingsKey();
+  if (k !== lastSettings) { state.settings.t = Date.now(); lastSettings = settingsKey(); }
+  store.save(state);
+  updateChrome();
+  sync.schedulePush();
+}
+
+// mark a word as changed now (or removed), for syncing between devices
+function touch(id) {
+  const now = Date.now();
+  if (state.progress[id]) { state.progress[id].t = now; delete state.deleted[id]; }
+  else state.deleted[id] = now;
+}
+
+// ---------- cloud sync glue ----------
+function syncedState() {
+  const { progress, custom, settings, skipped, log, deleted } = state;
+  return { progress, custom, settings, skipped, log, deleted };
+}
+
+function applySynced(remoteMerged) {
+  // merge again with the current local state, in case something changed during the sync
+  const before = JSON.stringify([state.progress, state.custom, state.settings]);
+  const m = mergeStates(syncedState(), remoteMerged);
+  state = { ...state, ...m };
+  lastSettings = settingsKey();
+  store.save(state);
+  reindex();
+  updateChrome();
+  const changed = before !== JSON.stringify([state.progress, state.custom, state.settings]);
+  if (changed && !document.querySelector('.sheet-backdrop') && !(tab === 'review' && view.querySelector('.card.revealed'))) go(tab);
+}
+
+function onSyncStatus(st) {
+  syncStatus = st;
+  updateChrome();
+  const box = document.getElementById('account');
+  if (box) renderAccount(box);
+}
 
 function reindex() {
   index = new Map();
@@ -64,7 +109,9 @@ function updateChrome() {
   dueBadge.textContent = due > 99 ? '99+' : due;
   const total = Object.keys(state.progress).length;
   const streak = streakDays(state.log);
-  statsEl.textContent = `${streak ? `🔥 ${streak} · ` : ''}${total} words`;
+  const cloud = syncStatus.signedIn ? (syncStatus.syncing ? '⟳ ' : syncStatus.error ? '⚠︎ ' : '☁︎ ') : '';
+  statsEl.textContent = `${cloud}${streak ? `🔥 ${streak} · ` : ''}${total} words`;
+  statsEl.title = syncStatus.signedIn ? (syncStatus.error || `Synced as ${syncStatus.user?.email || ''}`) : '';
   document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
 }
 
@@ -120,6 +167,7 @@ function hideUndo() {
 function undo(snap = session.undo) {
   if (!snap) return;
   if (snap.card) state.progress[snap.id] = snap.card; else delete state.progress[snap.id];
+  touch(snap.id);
   state.skipped = snap.skipped;
   if (snap.log) state.log[snap.date] = snap.log; else delete state.log[snap.date];
   session.reviewedToday = snap.reviewedToday;
@@ -236,6 +284,7 @@ function renderReview() {
   const done = (knew) => {
     const snap = snapshot(id);
     state.progress[id] = review(state.progress[id], knew);
+    touch(id);
     session.reviewedToday++;
     logEvent('reviews');
     if (knew) logEvent('correct');
@@ -281,8 +330,16 @@ function renderLevelPicker() {
         <p class="muted">Which levels do you want to learn? Tap to choose one or more. You can change this any time in Settings.</p>
         ${levelToggles(selected)}
         <button class="btn primary wide" id="startLearning" ${selected.length ? '' : 'disabled'}>Start learning</button>
+        <div class="or"><span>or</span></div>
+        <p class="small muted center">Already use WordSv on another device?</p>
+        <button class="btn ghost wide google-btn" id="pickerSignIn">${googleIcon()} Sign in with Google</button>
+        ${syncStatus.error ? `<p class="small error center">${esc(syncStatus.error)}</p>` : ''}
       </section>`;
     wireLevelToggles(view, selected, draw);
+    view.querySelector('#pickerSignIn').onclick = async () => {
+      const ok = await sync.signIn();
+      if (!ok) draw();
+    };
     view.querySelector('#startLearning').onclick = () => {
       state.settings.levels = selected;
       state.settings.level = 'all';
@@ -296,6 +353,7 @@ function renderLevelPicker() {
 
 function addWord(w, known = false) {
   state.progress[w.id] = known ? knownCard() : newCard();
+  touch(w.id);
   state.skipped = state.skipped.filter((s) => s !== w.id);
   logEvent('added');
 }
@@ -493,6 +551,7 @@ function openWord(id) {
   if (rm) rm.onclick = () => {
     if (!confirm(`Remove “${w.sv}”? Its progress will be lost.`)) return;
     delete state.progress[id];
+    touch(id);
     persist(); close(); go(tab);
   };
 }
@@ -592,11 +651,69 @@ function renderStats() {
     </section>`;
 }
 
+// ---------- Account (sign in & sync) ----------
+function googleIcon() {
+  return '<svg class="g-icon" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.2l7.9 6.2C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.2C.9 16.6 0 20.2 0 24s.9 7.4 2.6 10.8l7.9-6.2z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.2-8.5 2.2-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.2C6.6 42.6 14.6 48 24 48z"/></svg>';
+}
+
+function agoText(ts) {
+  if (!ts) return 'not yet';
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min ago`;
+  return new Date(ts).toLocaleString('sv-SE', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function renderAccount(box) {
+  const st = syncStatus;
+  if (!st.signedIn) {
+    box.innerHTML = `
+      <h3>Account &amp; sync</h3>
+      <p class="small muted">Sign in to back up your progress and use it on all your devices. WordSv still works without an account.</p>
+      <button class="btn ghost wide google-btn" id="signIn">${googleIcon()} Sign in with Google</button>
+      ${st.error ? `<p class="small error">${esc(st.error)}</p>` : ''}
+      <details class="privacy"><summary>What is stored?</summary>
+        <p class="small muted">If you sign in, WordSv stores your Google name, email address and your learning progress (your words, review schedule, settings and daily activity) in Google Firebase in the EU. Nothing is shared or sold. You can delete everything at any time under “Delete my account and data”.</p>
+      </details>`;
+    box.querySelector('#signIn').onclick = () => sync.signIn();
+    return;
+  }
+  const u = st.user || {};
+  box.innerHTML = `
+    <h3>Account &amp; sync</h3>
+    <div class="who">
+      ${u.photo ? `<img src="${esc(u.photo)}" alt="" referrerpolicy="no-referrer">` : `<div class="avatar">${esc((u.name || u.email || '?')[0].toUpperCase())}</div>`}
+      <div><b>${esc(u.name || 'Signed in')}</b><span class="small muted">${esc(u.email)}</span></div>
+    </div>
+    <p class="small ${st.error ? 'error' : 'muted'}">${st.syncing ? '⟳ Syncing…' : st.error ? esc(st.error) : `☁︎ Progress synced ${agoText(st.lastSync)}`}</p>
+    <div class="actions">
+      <button class="btn ghost" id="syncNow" ${st.syncing ? 'disabled' : ''}>Sync now</button>
+      <button class="btn ghost" id="signOut">Sign out</button>
+    </div>
+    <details class="privacy"><summary>Delete my account and data</summary>
+      <p class="small muted">Removes your progress from the cloud and deletes your WordSv account. Progress on this device stays until you reset it below.</p>
+      <button class="btn danger" id="deleteAccount">Delete my account and data</button>
+    </details>`;
+  box.querySelector('#syncNow').onclick = () => sync.syncNow();
+  box.querySelector('#signOut').onclick = async () => {
+    if (!confirm('Sign out? Your progress stays on this device and in the cloud.')) return;
+    await sync.signOut();
+    toast('Signed out');
+  };
+  box.querySelector('#deleteAccount').onclick = async () => {
+    if (!confirm('Permanently delete your WordSv account and the progress stored in the cloud?')) return;
+    if (await sync.deleteAccount()) toast('Account and cloud data deleted');
+  };
+}
+
 // ---------- Settings tab ----------
 function renderSettings() {
   const s = state.settings;
   const dir = s.direction || 'sv-en';
   view.innerHTML = `
+    <section class="panel" id="account"></section>
+
     <section class="panel">
       <h3>Practice</h3>
       <label class="row">Daily review limit
@@ -652,6 +769,7 @@ function renderSettings() {
       Word list: <a href="https://spraakbanken.gu.se/en/resources/kelly" target="_blank" rel="noopener">Swedish Kelly list</a> (Språkbanken Text, CC BY 4.0).
       Translations &amp; examples: <a href="https://folkets-lexikon.csc.kth.se/folkets/" target="_blank" rel="noopener">Folkets lexikon</a> (CC BY-SA 2.5).</p>`;
 
+  renderAccount(view.querySelector('#account'));
   const levelBox = view.querySelector('#levelSettings');
   const chosen = [...enabledLevels()];
   const redrawLevels = (sel) => {
@@ -680,9 +798,13 @@ function renderSettings() {
     try { state = await store.importFile(f); reindex(); persist(); toast('Backup restored'); renderSettings(); }
     catch (err) { alert('Import failed: ' + err.message); }
   };
-  view.querySelector('#reset').onclick = () => {
-    if (!confirm('Delete all progress and custom words on this device?')) return;
-    store.reset(); state = store.load(); reindex(); persist(); toast('Reset done'); renderSettings();
+  view.querySelector('#reset').onclick = async () => {
+    const msg = syncStatus.signedIn
+      ? 'Delete all progress on this device? You will be signed out; your copy in the cloud stays (use “Delete my account and data” to remove it).'
+      : 'Delete all progress and custom words on this device?';
+    if (!confirm(msg)) return;
+    if (syncStatus.signedIn) await sync.signOut();
+    store.reset(); state = store.load(); reindex(); lastSettings = settingsKey(); store.save(state); updateChrome(); toast('Reset done'); renderSettings();
   };
   view.querySelector('#addForm').onsubmit = (e) => {
     e.preventDefault();
@@ -691,7 +813,7 @@ function renderSettings() {
     if (!sv || !en) return;
     const id = 'custom-' + sv.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now().toString(36);
     const examples = [[f.ex1, f.ex1en], [f.ex2, f.ex2en]].filter(([a]) => a && a.trim()).map(([a, b]) => ({ sv: a.trim(), en: (b || '').trim() }));
-    const w = { id, sv, en, forms: f.forms.trim(), pos: f.pos, level: f.level, examples };
+    const w = { id, sv, en, forms: f.forms.trim(), pos: f.pos, level: f.level, examples, t: Date.now() };
     state.custom.push(w);
     reindex();
     if (f.addNow) addWord(w);
@@ -751,6 +873,7 @@ async function init() {
   const today = todayStr();
   session.reviewedToday = Object.values(state.progress).filter((c) => c.last === today).length;
   go(Object.keys(state.progress).length ? 'review' : 'learn');
+  sync.initSync({ getState: syncedState, applyState: applySynced, onStatus: onSyncStatus });
 }
 
 if ('serviceWorker' in navigator) {
