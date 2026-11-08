@@ -149,6 +149,7 @@ export async function deleteAccount() {
   const { A, F, auth } = fb;
   const ref = userDoc();
   try {
+    await runBeforeDelete();
     await F.deleteDoc(ref);
     try {
       await A.deleteUser(auth.currentUser);
@@ -169,3 +170,10 @@ export async function deleteAccount() {
     return false;
   }
 }
+
+// For the social features (social.js): the loaded SDK and the signed-in user.
+export async function firebase() { return loadSdk(); }
+export function currentUser() { return fb && fb.auth.currentUser; }
+export function onDeleteAccount(fn) { beforeDelete.push(fn); }
+const beforeDelete = [];
+export async function runBeforeDelete() { for (const fn of beforeDelete) await fn().catch(() => {}); }

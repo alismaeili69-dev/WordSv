@@ -11,6 +11,7 @@ const DEFAULT = {
   skipped: [],           // wordIds skipped in Learn (shown again later)
   log: {},               // 'YYYY-MM-DD' -> { reviews, correct, added } for stats and streaks
   deleted: {},           // wordId -> time removed (so removals sync to other devices)
+  badges: {},            // badgeId -> date unlocked
 };
 
 export function load() {
@@ -72,6 +73,7 @@ export async function importFile(file) {
     skipped: Array.isArray(data.skipped) ? data.skipped : [],
     log: data.log && typeof data.log === 'object' ? data.log : {},
     deleted: data.deleted && typeof data.deleted === 'object' ? data.deleted : {},
+    badges: data.badges && typeof data.badges === 'object' ? data.badges : {},
   };
 }
 

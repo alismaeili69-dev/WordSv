@@ -4,6 +4,9 @@ import { makeSwipeable } from './swipe.js';
 import { streakDays, bestStreak, lastDays, forecast, accuracy } from './stats.js';
 import { mergeStates } from './merge.js';
 import * as sync from './sync.js';
+import * as social from './social.js';
+import { BADGES, newlyEarned, badgeById, wordOfDay } from './badges.js';
+import { initMoments, renderMoments, openComposer, refresh as refreshMoments, resetMoments, socialCounts } from './moments-ui.js';
 
 const view = document.getElementById('view');
 const statsEl = document.getElementById('stats');
@@ -31,6 +34,138 @@ function persist() {
   store.save(state);
   updateChrome();
   sync.schedulePush();
+  clearTimeout(badgeTimer);
+  badgeTimer = setTimeout(checkBadges, 600);
+}
+let badgeTimer = null;
+
+// ---------- badges, confetti, word of the day ----------
+function counters() { return state.settings.counters || (state.settings.counters = {}); }
+function bump(key, n = 1, max = false) {
+  const c = counters();
+  c[key] = max ? Math.max(c[key] || 0, n) : (c[key] || 0) + n;
+}
+
+function badgeContext() {
+  const cards = Object.values(state.progress);
+  const logs = Object.values(state.log);
+  const levels = new Set(Object.keys(state.progress).map((id) => wordById(id)?.level).filter(Boolean));
+  const c = counters();
+  return {
+    words: cards.length,
+    mastered: cards.filter((x) => x.mastered).length,
+    bestStreak: Math.max(streakDays(state.log), bestStreak(state.log)),
+    reviews: logs.reduce((t, e) => t + (e.reviews || 0), 0),
+    bestDay: logs.reduce((t, e) => Math.max(t, e.reviews || 0), 0),
+    clearedToday: !!c.cleanSweep,
+    levelsTouched: LEVELS.filter((l) => levels.has(l)).length,
+    custom: state.custom.length,
+    hasUsername: !!c.hasUsername,
+    friends: c.friends || 0,
+    momentsPosted: c.momentsPosted || 0,
+    wotdAdded: c.wotdAdded || 0,
+  };
+}
+
+function checkBadges() {
+  const fresh = newlyEarned(badgeContext(), state.badges);
+  if (!fresh.length) return;
+  const first = Object.keys(state.badges).length === 0;
+  const d = todayStr();
+  fresh.forEach((id) => { state.badges[id] = d; });
+  store.save(state);
+  sync.schedulePush();
+  if (first && fresh.length > 2) {
+    celebrate(`🏅 You've earned ${fresh.length} badges already! See them under Me.`);
+  } else {
+    fresh.forEach((id, i) => setTimeout(() => { const b = badgeById(id); celebrate(`${b.icon} Badge unlocked: ${b.name}`); }, i * 2200));
+  }
+  if (tab === 'me') renderMe();
+}
+
+function celebrate(msg) {
+  confetti();
+  const t = document.createElement('div');
+  t.className = 'toast badge-toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.classList.add('out'), 2600);
+  setTimeout(() => t.remove(), 3000);
+}
+
+function confetti() {
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const box = document.createElement('div');
+  box.className = 'confetti';
+  const colors = ['#006AA7', '#FECC02', '#e8505b', '#1f9d55', '#ffffff'];
+  for (let i = 0; i < 70; i++) {
+    const p = document.createElement('i');
+    p.style.left = Math.random() * 100 + 'vw';
+    p.style.background = colors[i % colors.length];
+    p.style.animationDelay = Math.random() * 0.4 + 's';
+    p.style.animationDuration = 1.6 + Math.random() * 1.4 + 's';
+    p.style.setProperty('--x', (Math.random() * 160 - 80) + 'px');
+    p.style.setProperty('--r', Math.random() * 720 + 'deg');
+    box.appendChild(p);
+  }
+  document.body.appendChild(box);
+  setTimeout(() => box.remove(), 3500);
+}
+
+// a floating emoji, e.g. after reacting to a moment
+function burst(emoji, fromEl) {
+  const r = fromEl.getBoundingClientRect();
+  for (let i = 0; i < 6; i++) {
+    const e = document.createElement('span');
+    e.className = 'burst';
+    e.textContent = emoji;
+    e.style.left = r.left + r.width / 2 + 'px';
+    e.style.top = r.top + 'px';
+    e.style.setProperty('--x', (Math.random() * 120 - 60) + 'px');
+    e.style.animationDelay = i * 0.05 + 's';
+    document.body.appendChild(e);
+    setTimeout(() => e.remove(), 1400);
+  }
+}
+
+function todaysWordOfDay() {
+  const enabled = enabledLevels();
+  const pool = allWords().filter((w) => enabled.includes(w.level) && !String(w.id).startsWith('custom-'));
+  return wordOfDay(pool, todayStr());
+}
+
+function todaysWords() {
+  const d = todayStr();
+  return Object.entries(state.progress)
+    .filter(([, c]) => c.added === d || c.last === d)
+    .sort((a, b) => (b[1].t || 0) - (a[1].t || 0))
+    .map(([id]) => wordById(id)).filter(Boolean);
+}
+
+function isoWeekDays() {
+  const now = new Date();
+  const dow = (now.getDay() + 6) % 7; // Monday = 0
+  const out = [];
+  for (let i = 0; i <= dow; i++) { const x = new Date(now); x.setDate(now.getDate() - i); out.push(todayStr(x)); }
+  return out;
+}
+
+function publicStats() {
+  const cards = Object.values(state.progress);
+  return {
+    streak: streakDays(state.log),
+    words: cards.length,
+    mastered: cards.filter((c) => c.mastered).length,
+    weekReviews: isoWeekDays().reduce((t, d) => t + ((state.log[d] || {}).reviews || 0), 0),
+    weekKey: social.weekKey(),
+  };
+}
+
+function setMomentsBadge(n) {
+  const b = document.getElementById('momentsBadge');
+  if (!b) return;
+  b.hidden = !n;
+  b.textContent = n > 9 ? '9+' : n;
 }
 
 // mark a word as changed now (or removed), for syncing between devices
@@ -42,8 +177,8 @@ function touch(id) {
 
 // ---------- cloud sync glue ----------
 function syncedState() {
-  const { progress, custom, settings, skipped, log, deleted } = state;
-  return { progress, custom, settings, skipped, log, deleted };
+  const { progress, custom, settings, skipped, log, deleted, badges } = state;
+  return { progress, custom, settings, skipped, log, deleted, badges };
 }
 
 function applySynced(remoteMerged) {
@@ -59,7 +194,14 @@ function applySynced(remoteMerged) {
   if (changed && !document.querySelector('.sheet-backdrop') && !(tab === 'review' && view.querySelector('.card.revealed'))) go(tab);
 }
 
+let lastSocialRefresh = 0;
+const lastSocial = { incoming: 0 };
 function onSyncStatus(st) {
+  if (syncStatus.signedIn && !st.signedIn) { resetMoments(); social.resetCache(); setMomentsBadge(0); }
+  if (st.signedIn && st.lastSync && !st.syncing && Date.now() - lastSocialRefresh > 120000) {
+    lastSocialRefresh = Date.now();
+    refreshMoments(tab === 'moments' ? view : null).catch(() => {});
+  }
   syncStatus = st;
   updateChrome();
   const box = document.getElementById('account');
@@ -112,7 +254,8 @@ function updateChrome() {
   const cloud = syncStatus.signedIn ? (syncStatus.syncing ? '⟳ ' : syncStatus.error ? '⚠︎ ' : '☁︎ ') : '';
   statsEl.textContent = `${cloud}${streak ? `🔥 ${streak} · ` : ''}${total} words`;
   statsEl.title = syncStatus.signedIn ? (syncStatus.error || `Synced as ${syncStatus.user?.email || ''}`) : '';
-  document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  const active = tab === 'settings' ? 'me' : tab;
+  document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === active));
 }
 
 // ---------- speech ----------
@@ -263,8 +406,11 @@ function renderReview() {
             ? `${due.length} more due, but you've hit your daily limit of ${limit}. Change it in Settings if you want more.`
             : `${today.reviews ? `You reviewed <b>${today.reviews}</b> word${today.reviews === 1 ? '' : 's'} today. ` : ''}${nextDue ? `Next review: <b>${formatDue(nextDue)}</b>.` : ''}`}</p>
         <button class="btn primary" data-goto="learn">Learn new words</button>
+        ${total && syncStatus.signedIn && todaysWords().length ? '<button class="btn ghost" data-share-today>✨ Share a word from today</button>' : ''}
       </section>`;
     view.querySelector('[data-goto]').onclick = () => go('learn');
+    const sh = view.querySelector('[data-share-today]');
+    if (sh) sh.onclick = () => openComposer({ wordObj: todaysWords()[0] });
     return;
   }
 
@@ -293,6 +439,11 @@ function renderReview() {
     offerUndo(snap, knew
       ? (c.mastered ? `★ “${w.sv}” mastered` : `“${w.sv}” → ${formatDue(c.due)}`)
       : `“${w.sv}” again tomorrow`);
+    if (c.mastered && knew) confetti();
+    if (dueList().length === 0) {
+      confetti();
+      if (!counters().cleanSweep) { bump('cleanSweep'); persist(); }
+    }
     renderReview();
   };
   wireCard(view, {
@@ -382,7 +533,11 @@ function renderLearn() {
   }
 
   const w = list[0];
+  const wotd = todaysWordOfDay();
+  const wotdBanner = wotd && !state.progress[wotd.id]
+    ? `<button class="wotd-mini" data-wotd="${esc(wotd.id)}"><span>☀️ Dagens ord</span><b>${esc(wotd.sv)}</b><span class="muted">${esc(wotd.en.split(',')[0])}</span><span class="arrow">›</span></button>` : '';
   view.innerHTML = `
+    ${wotdBanner}
     <div class="chips">${levelChips}<span class="muted small">${list.length} new · ${addedToday} added today</span></div>
     <div class="stack">${cardHTML(w, { revealed: true, mode: 'learn' })}</div>
     <div class="actions three">
@@ -393,6 +548,8 @@ function renderLearn() {
     <p class="legend">Swipe right to add · left to skip · “I know it” schedules the word in 2 weeks</p>`;
   if (state.settings.autoSpeak) speak(w.sv);
   wireLevelChips();
+  const wb = view.querySelector('[data-wotd]');
+  if (wb) wb.onclick = () => openWord(wb.dataset.wotd, { wotd: true });
   const el = wireCard(view, {
     onRight: () => {
       const snap = snapshot(w.id);
@@ -520,7 +677,7 @@ function renderWords() {
   view.querySelectorAll('.wordlist li').forEach((li) => li.onclick = () => openWord(li.dataset.id));
 }
 
-function openWord(id) {
+function openWord(id, { wotd = false } = {}) {
   const w = wordById(id);
   const c = state.progress[id];
   const dlg = document.createElement('div');
@@ -534,6 +691,7 @@ function openWord(id) {
             : '<button class="btn ghost" data-x="known">✓ I know it</button><button class="btn primary" data-x="add">+ Add to my words</button>'}
         <button class="btn ${c ? 'primary' : 'ghost'}" data-x="close">Close</button>
       </div>
+      ${syncStatus.signedIn ? '<button class="btn ghost wide share-btn" data-x="share">✨ Share as moment</button>' : ''}
     </div>`;
   document.body.appendChild(dlg);
   dlg.querySelectorAll('.speak').forEach((b) => b.onclick = () => speak(b.dataset.say));
@@ -544,7 +702,13 @@ function openWord(id) {
   dlg.querySelector('[data-x="close"]').onclick = close;
   const addBtn = dlg.querySelector('[data-x="add"]');
   const knownBtn = dlg.querySelector('[data-x="known"]');
-  const doAdd = (known) => { addWord(w, known); persist(); close(); toast(known ? `“${w.sv}” — review in 2 weeks` : `“${w.sv}” added`); go(tab); };
+  const doAdd = (known) => {
+    addWord(w, known);
+    if (wotd || (todaysWordOfDay() || {}).id === w.id) bump('wotdAdded');
+    persist(); close(); toast(known ? `“${w.sv}” — review in 2 weeks` : `“${w.sv}” added`); go(tab);
+  };
+  const shareBtn = dlg.querySelector('[data-x="share"]');
+  if (shareBtn) shareBtn.onclick = () => { close(); openComposer({ wordObj: w }); };
   if (addBtn) addBtn.onclick = () => doAdd(false);
   if (knownBtn) knownBtn.onclick = () => doAdd(true);
   const rm = dlg.querySelector('[data-x="remove"]');
@@ -578,6 +742,35 @@ function barChart(items, { value, label, tip, title, caption }) {
         }).join('')}
       </div>
     </figure>`;
+}
+
+function renderMe() {
+  renderStats();
+  const ctxB = badgeContext();
+  const got = BADGES.filter((b) => state.badges[b.id]);
+  const head = document.createElement('div');
+  head.className = 'me-head';
+  head.innerHTML = `
+    <div>
+      <b>${syncStatus.signedIn ? esc(syncStatus.user?.name || 'Me') : 'Me'}</b>
+      <span class="small muted">${got.length} of ${BADGES.length} badges</span>
+    </div>
+    <button class="btn ghost sm" id="openSettings">⚙︎ Settings</button>`;
+  view.prepend(head);
+  const sec = document.createElement('section');
+  sec.className = 'panel';
+  sec.innerHTML = `
+    <h3>Badges</h3>
+    <div class="badge-grid">
+      ${BADGES.map((b) => {
+        const on = !!state.badges[b.id];
+        return `<div class="badge-item ${on ? 'on' : ''}" title="${esc(b.desc)}${on ? ' · ' + state.badges[b.id] : ''}">
+          <span class="badge-icon">${on ? b.icon : '🔒'}</span><b>${esc(b.name)}</b><small>${esc(b.desc)}</small></div>`;
+      }).join('')}
+    </div>
+    <p class="small muted">${ctxB.bestStreak ? `Best streak: ${ctxB.bestStreak} days · ` : ''}${ctxB.reviews} reviews in total</p>`;
+  view.querySelector('.tiles').after(sec);
+  view.querySelector('#openSettings').onclick = () => go('settings');
 }
 
 function renderStats() {
@@ -712,6 +905,7 @@ function renderSettings() {
   const s = state.settings;
   const dir = s.direction || 'sv-en';
   view.innerHTML = `
+    <button class="link-btn back-btn" id="backToMe">‹ Me</button>
     <section class="panel" id="account"></section>
 
     <section class="panel">
@@ -770,6 +964,7 @@ function renderSettings() {
       Translations &amp; examples: <a href="https://folkets-lexikon.csc.kth.se/folkets/" target="_blank" rel="noopener">Folkets lexikon</a> (CC BY-SA 2.5).</p>`;
 
   renderAccount(view.querySelector('#account'));
+  view.querySelector('#backToMe').onclick = () => go('me');
   const levelBox = view.querySelector('#levelSettings');
   const chosen = [...enabledLevels()];
   const redrawLevels = (sel) => {
@@ -834,10 +1029,11 @@ function toast(msg) {
 }
 
 function go(t) {
+  if (t === 'stats') t = 'me';
   tab = t;
   updateChrome();
   view.scrollTop = 0;
-  ({ learn: renderLearn, review: renderReview, words: renderWords, stats: renderStats, settings: renderSettings })[t]();
+  ({ learn: renderLearn, review: renderReview, moments: () => renderMoments(view), words: renderWords, me: renderMe, settings: renderSettings })[t]();
 }
 
 document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tab !== tab) hideUndo(); go(b.dataset.tab); }));
@@ -845,7 +1041,7 @@ document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('c
 // Keyboard shortcuts (web on a computer): ← again/skip, → knew it/add, space reveal, K I know it, U undo
 document.addEventListener('keydown', (e) => {
   if (e.target.closest('input, select, textarea') || e.metaKey && e.key !== 'z' || e.altKey) return;
-  if (document.querySelector('.sheet-backdrop')) return;
+  if (document.querySelector('.sheet-backdrop, .composer, .viewer')) return;
   const click = (sel) => { const b = view.querySelector(sel); if (b) { e.preventDefault(); b.click(); } };
   if (e.key === 'ArrowRight') click('[data-act="right"]');
   else if (e.key === 'ArrowLeft') click('[data-act="left"]');
@@ -872,7 +1068,31 @@ async function init() {
   // Count reviews already done today (so the daily limit survives reloads)
   const today = todayStr();
   session.reviewedToday = Object.values(state.progress).filter((c) => c.last === today).length;
+  initMoments({
+    esc, toast, googleIcon, confetti, burst,
+    signIn: () => sync.signIn(),
+    status: () => syncStatus,
+    uid: () => sync.currentUser()?.uid,
+    currentTab: () => tab,
+    rerender: () => go(tab),
+    wordById, searchWords: searchBank, todaysWords,
+    isAdded: (id) => !!state.progress[id],
+    wordOfDay: todaysWordOfDay,
+    addWordOfDay: (w) => { addWord(w); bump('wotdAdded'); persist(); toast(`“${w.sv}” added — first review tomorrow`); },
+    addWordById: (id) => { const w = wordById(id); if (w && !state.progress[id]) { addWord(w); persist(); } },
+    onPosted: () => { bump('momentsPosted'); persist(); confetti(); },
+    onUsername: () => { bump('hasUsername', 1, true); persist(); },
+    onSocial: ({ friends, incoming, unseen }) => {
+      if (friends !== undefined) { bump('friends', friends, true); persist(); }
+      setMomentsBadge((incoming ?? (lastSocial.incoming || 0)) + (unseen ?? 0));
+      if (incoming !== undefined) lastSocial.incoming = incoming;
+    },
+    publicStats,
+    pushStats: () => social.updateStats(publicStats()),
+  });
+  sync.onDeleteAccount(() => social.deleteSocialData());
   go(Object.keys(state.progress).length ? 'review' : 'learn');
+  setTimeout(checkBadges, 1500);
   sync.initSync({ getState: syncedState, applyState: applySynced, onStatus: onSyncStatus });
 }
 

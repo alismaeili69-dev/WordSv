@@ -53,7 +53,16 @@ export function mergeStates(local, remote) {
 
   const skipped = [...new Set([...(remote.skipped || []), ...(local.skipped || [])])].filter((id) => !progress[id]);
 
-  return { progress, deleted, custom: [...custom.values()], settings, log, skipped };
+  // badges: union, keep the earliest unlock date
+  const badges = { ...(remote.badges || {}) };
+  for (const [id, d] of Object.entries(local.badges || {})) badges[id] = badges[id] && badges[id] < d ? badges[id] : d;
+
+  // counters for social badges: keep the larger
+  const counters = { ...(remote.settings?.counters || {}) };
+  for (const [k, v] of Object.entries(local.settings?.counters || {})) counters[k] = Math.max(v || 0, counters[k] || 0);
+  if (Object.keys(counters).length) settings.counters = counters;
+
+  return { progress, deleted, custom: [...custom.values()], settings, log, skipped, badges };
 }
 
 // Compact form for the server: Firestore documents are limited to 1 MiB, and all
@@ -72,6 +81,7 @@ export function encode(state) {
     settings: state.settings || {},
     log: state.log || {},
     skipped: state.skipped || [],
+    badges: state.badges || {},
   };
 }
 
@@ -90,5 +100,6 @@ export function decode(doc) {
     settings: doc.settings || {},
     log: doc.log || {},
     skipped: doc.skipped || [],
+    badges: doc.badges || {},
   };
 }

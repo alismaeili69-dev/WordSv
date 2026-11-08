@@ -1,17 +1,89 @@
 rules_version = '2';
 
-// WordSv: each signed-in user can read and write only their own document, users/{uid}.
-// Paste this into Firebase console → Firestore Database → Rules, then Publish.
+// WordSv security rules.
+// Paste into Firebase console → Firestore Database → Rules, then Publish.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function changedOnly(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+    function shortText(v, n) { return v is string && v.size() <= n; }
+
+    // Private progress: each user only their own document.
     match /users/{uid} {
-      allow read, delete: if request.auth != null && request.auth.uid == uid;
-      allow create, update: if request.auth != null
-        && request.auth.uid == uid
+      allow read, delete: if signedIn() && me() == uid;
+      allow create, update: if signedIn() && me() == uid
         && request.resource.data.v == 1
-        && request.resource.data.keys().hasOnly(['v', 'p', 'deleted', 'custom', 'settings', 'log', 'skipped', 'email', 'updatedAt']);
+        && request.resource.data.keys().hasOnly(['v', 'p', 'deleted', 'custom', 'settings', 'log', 'skipped', 'badges', 'email', 'updatedAt']);
     }
-    // everything else is closed
+
+    // Unique public usernames. Can be looked up one at a time (not listed).
+    match /usernames/{name} {
+      allow get: if signedIn();
+      allow create: if signedIn()
+        && name.matches('^[a-z0-9_.]{3,20}$')
+        && request.resource.data.keys().hasOnly(['uid'])
+        && request.resource.data.uid == me();
+      allow delete: if signedIn() && resource.data.uid == me();
+    }
+
+    // Public profile: username, avatar and stats for the friends leaderboard.
+    match /profiles/{uid} {
+      allow get: if signedIn();
+      allow create, update: if signedIn() && me() == uid
+        && request.resource.data.keys().hasOnly(['username', 'avatar', 'color', 'streak', 'words', 'mastered', 'weekReviews', 'weekKey', 'updatedAt'])
+        && request.resource.data.username is string
+        && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == me()
+        && shortText(request.resource.data.avatar, 16);
+      allow delete: if signedIn() && me() == uid;
+    }
+
+    // Friend requests and friendships. Document id is "<uidA>_<uidB>" (sorted).
+    match /friendships/{fid} {
+      allow get: if signedIn() && me() in fid.split('_');
+      allow list: if signedIn() && me() in resource.data.users;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['users', 'names', 'avatars', 'requestedBy', 'status', 'createdAt'])
+        && request.resource.data.requestedBy == me()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.users.size() == 2
+        && me() in request.resource.data.users
+        && fid == request.resource.data.users[0] + '_' + request.resource.data.users[1]
+        && request.resource.data.users[0] < request.resource.data.users[1];
+      // only the person who received the request can accept it
+      allow update: if signedIn()
+        && me() in resource.data.users
+        && me() != resource.data.requestedBy
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'accepted'
+        && changedOnly(['status', 'acceptedAt']);
+      allow delete: if signedIn() && me() in resource.data.users;
+    }
+
+    // Moments (24-hour word stories), visible to the author's friends at posting time.
+    match /moments/{id} {
+      allow read: if signedIn() && me() in resource.data.audience;
+      allow create: if signedIn()
+        && request.resource.data.author == me()
+        && me() in request.resource.data.audience
+        && request.resource.data.audience.size() <= 300
+        && shortText(request.resource.data.word, 60) && request.resource.data.word.size() > 0
+        && shortText(request.resource.data.translation, 120)
+        && shortText(request.resource.data.context, 220)
+        && shortText(request.resource.data.contextEn, 220)
+        && shortText(request.resource.data.note, 200)
+        && request.resource.data.reactions.size() == 0
+        && request.resource.data.seen.size() == 0;
+      // friends may only add/remove their own reaction and mark it seen
+      allow update: if signedIn()
+        && me() in resource.data.audience
+        && changedOnly(['reactions', 'seen'])
+        && request.resource.data.reactions.diff(resource.data.reactions).affectedKeys().hasOnly([me()])
+        && request.resource.data.seen.diff(resource.data.seen).affectedKeys().hasOnly([me()]);
+      allow delete: if signedIn() && resource.data.author == me();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

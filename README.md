@@ -10,6 +10,9 @@ A WordUp-style app for learning Swedish vocabulary at every level (A1–C1) with
   - Swipe left: the word goes 2 steps back and comes up again tomorrow.
   - After the 180-day step, the word is marked as mastered.
 - **My words**: search your words and see each word's progress and next review date. Switch to **All words** to search the whole bank (Swedish or English) and add words directly.
+- **Moments** (sign-in required): pick a public username and avatar, add friends by username, and share the words you learn as styled, Instagram-style text stories that last 24 hours (8 colour themes, 5 fonts, emoji, alignment). Tap a friend's ring to watch their stories, react with emoji, and add their word to your own list with one tap. Includes a weekly friends leaderboard.
+- **Dagens ord**: a word of the day from your levels, in Learn and Moments.
+- **Me**: stats plus 20 badges (streaks, word counts, mastered words, friends, moments…) with confetti when you unlock one. Settings are under Me → ⚙︎.
 - **Stats**: daily streak, reviews per day, what's coming up in the next 7 days, how strong your words are, and progress per level.
 - **Undo**: every swipe can be taken back for a few seconds (handy after a mis-swipe).
 - **I know it**: in Learn, marks a word you already know; it starts at step 6 and comes back in 2 weeks.
@@ -24,6 +27,7 @@ Progress is stored in your browser on that device (`localStorage`). Optionally, 
 - Google sign-in uses Firebase Authentication; progress is stored in Cloud Firestore, one document per user at `users/{uid}`.
 - `src/firebase-config.js` holds the public web config. `firestore.rules` holds the security rules (paste them into Firebase console → Firestore Database → Rules → Publish).
 - Sync merges instead of overwriting: every word has a change time, removals leave a tombstone, and the newest change wins per word (`src/merge.js`, tested in `tests/merge.test.js`). Syncs run a few seconds after changes, when the app opens or comes back to the foreground, and on “Sync now”.
+- Social data lives in `usernames/{name}`, `profiles/{uid}`, `friendships/{uidA_uidB}` and `moments/{id}`; `firestore.rules` enforces unique usernames, that only friends at posting time can read a moment, and that friends can only add their own reaction.
 - The Firebase SDK is loaded from Google's CDN only when someone signs in, so the app stays light for everyone else.
 
 ## Install on iPhone
@@ -93,6 +97,9 @@ src/storage.js        save / export (share sheet) / import
 src/stats.js          streaks, forecast, accuracy (pure functions)
 src/merge.js          merging progress between devices (pure functions)
 src/sync.js           Google sign-in and Firestore sync
+src/social.js         usernames, friends, moments, leaderboard (Firestore)
+src/moments-ui.js     Moments tab: story rings, composer, viewer, friends
+src/badges.js         badges and word of the day (pure functions)
 src/firebase-config.js Firebase project config (public)
 firestore.rules       database security rules
 tests/                unit tests (node --test)
