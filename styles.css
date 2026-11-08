@@ -622,3 +622,16 @@ body.no-scroll { overflow: hidden; }
   .viewer-bars b.run { animation: none !important; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }
+
+/* Moments loading skeleton */
+.m-skel { animation: fade .3s ease both; }
+.skel { display: block; background: linear-gradient(90deg, var(--line) 0%, color-mix(in oklab, var(--line), var(--surface) 65%) 50%, var(--line) 100%); background-size: 200% 100%; animation: shimmer 1.3s linear infinite; border-radius: 10px; }
+.skel.circle { width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0; }
+.skel.line { height: 12px; margin: 4px 0; }
+.skel.w40 { width: 40%; } .skel.w25 { width: 25%; }
+.skel.ring-skel { width: 68px; height: 68px; border-radius: 50%; flex: 0 0 auto; }
+.skel.block { height: 54px; border-radius: var(--r-btn); margin-bottom: 14px; }
+.skel.block.tall { height: 150px; border-radius: var(--r-panel); }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.icon-btn.spinning { animation: spin .9s linear infinite; pointer-events: none; }
+@keyframes spin { to { transform: rotate(360deg); } }

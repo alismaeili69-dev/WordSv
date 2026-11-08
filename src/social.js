@@ -8,7 +8,7 @@
 //                           theme, font, align, level, wordId, photo (JPEG data URL), scrim,
 //                           audience:[uids], createdAt, expiresAt,
 //                           reactions:{uid:emoji}, seen:{uid:true} }
-import { firebase, currentUser } from './sync.js';
+import { firebase, currentUser, net } from './sync.js';
 import { isStoryPhoto } from './photo.js';
 
 export const USERNAME_RE = /^[a-z0-9_.]{3,20}$/;
@@ -43,14 +43,14 @@ export function weekKey(d = new Date()) {
 export async function myProfile(force = false) {
   if (cache.profile !== undefined && !force) return cache.profile;
   const { F, db } = await firebase();
-  const snap = await F.getDoc(F.doc(db, 'profiles', uid()));
+  const snap = await net(() => F.getDoc(F.doc(db, 'profiles', uid())));
   cache.profile = snap.exists() ? snap.data() : null;
   return cache.profile;
 }
 
 export async function usernameTaken(name) {
   const { F, db } = await firebase();
-  const snap = await F.getDoc(F.doc(db, 'usernames', name));
+  const snap = await net(() => F.getDoc(F.doc(db, 'usernames', name)));
   return snap.exists() && snap.data().uid !== uid();
 }
 
@@ -66,7 +66,7 @@ export async function claimUsername(raw, { avatar, color }, stats) {
   if (!old || old.username !== name) batch.set(F.doc(db, 'usernames', name), { uid: me });
   const profile = { ...(old || {}), ...stats, username: name, avatar, color, updatedAt: Date.now() };
   batch.set(F.doc(db, 'profiles', me), profile);
-  await batch.commit();
+  await net(() => batch.commit(), undefined, { write: true });
   cache.profile = profile;
   return profile;
 }
@@ -79,13 +79,13 @@ export async function updateStats(stats) {
   if (!changed) return;
   const { F, db } = await firebase();
   const next = { ...p, ...stats, updatedAt: Date.now() };
-  await F.setDoc(F.doc(db, 'profiles', uid()), next);
+  await net(() => F.setDoc(F.doc(db, 'profiles', uid()), next), undefined, { write: true });
   cache.profile = next;
 }
 
 export async function getProfile(id) {
   const { F, db } = await firebase();
-  const snap = await F.getDoc(F.doc(db, 'profiles', id));
+  const snap = await net(() => F.getDoc(F.doc(db, 'profiles', id)));
   return snap.exists() ? { uid: id, ...snap.data() } : null;
 }
 
@@ -94,7 +94,7 @@ export async function loadFriendships(force = false) {
   if (cache.friends && !force) return cache.friends;
   const { F, db } = await firebase();
   const me = uid();
-  const res = await F.getDocs(F.query(F.collection(db, 'friendships'), F.where('users', 'array-contains', me)));
+  const res = await net(() => F.getDocs(F.query(F.collection(db, 'friendships'), F.where('users', 'array-contains', me))));
   const all = res.docs.map((d) => ({ id: d.id, ...d.data() }));
   const other = (f) => f.users.find((u) => u !== me);
   cache.friends = {
@@ -113,12 +113,12 @@ export async function addFriend(raw) {
   const mine = await myProfile();
   if (!mine) throw Object.assign(new Error('Choose your own username first.'), { code: 'no-username' });
   if (name === mine.username) throw Object.assign(new Error("That's you! 😄"), { code: 'self' });
-  const u = await F.getDoc(F.doc(db, 'usernames', name));
+  const u = await net(() => F.getDoc(F.doc(db, 'usernames', name)));
   if (!u.exists()) throw Object.assign(new Error(`No one is called @${name}.`), { code: 'not-found' });
   const them = u.data().uid;
   const id = pairId(me, them);
   const ref = F.doc(db, 'friendships', id);
-  const existing = await F.getDoc(ref).catch(() => null);
+  const existing = await net(() => F.getDoc(ref).catch(() => null));
   if (existing && existing.exists()) {
     const f = existing.data();
     if (f.status === 'accepted') return 'already';
@@ -127,27 +127,27 @@ export async function addFriend(raw) {
   }
   const theirProfile = await getProfile(them).catch(() => null);
   const users = [me, them].sort();
-  await F.setDoc(ref, {
+  await net(() => F.setDoc(ref, {
     users,
     names: { [me]: mine.username, [them]: name },
     avatars: { [me]: mine.avatar || '🙂', [them]: (theirProfile && theirProfile.avatar) || '🙂' },
     requestedBy: me,
     status: 'pending',
     createdAt: Date.now(),
-  });
+  }), undefined, { write: true });
   cache.friends = null;
   return 'sent';
 }
 
 export async function acceptFriend(id) {
   const { F, db } = await firebase();
-  await F.updateDoc(F.doc(db, 'friendships', id), { status: 'accepted', acceptedAt: Date.now() });
+  await net(() => F.updateDoc(F.doc(db, 'friendships', id), { status: 'accepted', acceptedAt: Date.now() }), undefined, { write: true });
   cache.friends = null;
 }
 
 export async function removeFriendship(id) {
   const { F, db } = await firebase();
-  await F.deleteDoc(F.doc(db, 'friendships', id));
+  await net(() => F.deleteDoc(F.doc(db, 'friendships', id)), undefined, { write: true });
   cache.friends = null;
 }
 
@@ -186,7 +186,7 @@ export async function postMoment(m) {
     seen: {},
   };
   if (!doc.word && !doc.photo) throw Object.assign(new Error('Write a word or add a photo first.'), { code: 'empty' });
-  const ref = await F.addDoc(F.collection(db, 'moments'), doc);
+  const ref = await net(() => F.addDoc(F.collection(db, 'moments'), doc), 25000, { write: true });
   return { id: ref.id, ...doc };
 }
 
@@ -194,7 +194,7 @@ export async function postMoment(m) {
 export async function loadMoments() {
   const { F, db } = await firebase();
   const me = uid();
-  const res = await F.getDocs(F.query(F.collection(db, 'moments'), F.where('audience', 'array-contains', me)));
+  const res = await net(() => F.getDocs(F.query(F.collection(db, 'moments'), F.where('audience', 'array-contains', me))));
   const now = Date.now();
   const live = [], expiredMine = [];
   for (const d of res.docs) {
@@ -218,7 +218,7 @@ export async function markSeen(m) {
   if (m.author === me || (m.seen && m.seen[me])) return;
   const { F, db } = await firebase();
   m.seen = { ...(m.seen || {}), [me]: true };
-  await F.updateDoc(F.doc(db, 'moments', m.id), { [`seen.${me}`]: true }).catch(() => {});
+  await net(() => F.updateDoc(F.doc(db, 'moments', m.id), { [`seen.${me}`]: true }).catch(() => {}), undefined, { write: true });
 }
 
 export async function react(m, emoji) {
@@ -227,12 +227,12 @@ export async function react(m, emoji) {
   const same = m.reactions && m.reactions[me] === emoji;
   m.reactions = { ...(m.reactions || {}) };
   if (same) delete m.reactions[me]; else m.reactions[me] = emoji;
-  await F.updateDoc(F.doc(db, 'moments', m.id), { [`reactions.${me}`]: same ? F.deleteField() : emoji });
+  await net(() => F.updateDoc(F.doc(db, 'moments', m.id), { [`reactions.${me}`]: same ? F.deleteField() : emoji }), undefined, { write: true });
 }
 
 export async function deleteMoment(id) {
   const { F, db } = await firebase();
-  await F.deleteDoc(F.doc(db, 'moments', id));
+  await net(() => F.deleteDoc(F.doc(db, 'moments', id)), undefined, { write: true });
 }
 
 // ---------- leaderboard ----------
@@ -252,12 +252,12 @@ export async function deleteSocialData() {
   const { F, db } = await firebase();
   const me = uid();
   const p = await myProfile(true).catch(() => null);
-  const mine = await F.getDocs(F.query(F.collection(db, 'moments'), F.where('audience', 'array-contains', me))).catch(() => ({ docs: [] }));
-  for (const d of mine.docs) if (d.data().author === me) await F.deleteDoc(d.ref).catch(() => {});
-  const fr = await F.getDocs(F.query(F.collection(db, 'friendships'), F.where('users', 'array-contains', me))).catch(() => ({ docs: [] }));
-  for (const d of fr.docs) await F.deleteDoc(d.ref).catch(() => {});
-  if (p && p.username) await F.deleteDoc(F.doc(db, 'usernames', p.username)).catch(() => {});
-  await F.deleteDoc(F.doc(db, 'profiles', me)).catch(() => {});
+  const mine = await net(() => F.getDocs(F.query(F.collection(db, 'moments'), F.where('audience', 'array-contains', me))).catch(() => ({ docs: [] })));
+  for (const d of mine.docs) if (d.data().author === me) await net(() => F.deleteDoc(d.ref).catch(() => {}), undefined, { write: true });
+  const fr = await net(() => F.getDocs(F.query(F.collection(db, 'friendships'), F.where('users', 'array-contains', me))).catch(() => ({ docs: [] })));
+  for (const d of fr.docs) await net(() => F.deleteDoc(d.ref).catch(() => {}), undefined, { write: true });
+  if (p && p.username) await net(() => F.deleteDoc(F.doc(db, 'usernames', p.username)).catch(() => {}), undefined, { write: true });
+  await net(() => F.deleteDoc(F.doc(db, 'profiles', me)).catch(() => {}), undefined, { write: true });
   cache = { profile: undefined, friends: null, requests: null };
 }
 

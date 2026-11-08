@@ -1,5 +1,6 @@
 // Moments: share the words you learn as 24-hour, Instagram-style text stories with friends.
 import { closeOverlay } from './motion.js';
+import { idbGet, idbSet, idbDel } from './idb.js';
 import * as social from './social.js';
 import { loadImage, renderStoryImage, isStoryPhoto } from './photo.js';
 
@@ -26,8 +27,7 @@ const STORY_MS = 7000;
 const SCRIMS = { dark: 'Dark box', light: 'Light box', clean: 'Shadow only' };
 
 let ctx = null;          // app helpers
-let data = { profile: undefined, groups: [], friends: null, board: [] };
-let loading = false;
+let data = { profile: undefined, groups: [], friends: null, board: [], loaded: false, uid: null, error: null };
 
 export function initMoments(appCtx) { ctx = appCtx; }
 
@@ -44,6 +44,7 @@ function errText(e) {
   if (!e) return 'Something went wrong.';
   if (e.code && String(e.code).includes('permission')) return 'Not allowed by the server. (Have the latest database rules been published?)';
   if (e.code && String(e.code).includes('unavailable')) return 'You seem to be offline.';
+  if (e.code === 'timeout') return navigator.onLine === false ? 'You seem to be offline.' : 'The server is not answering right now. Check your connection and try again.';
   return e.message || 'Something went wrong.';
 }
 
@@ -75,9 +76,41 @@ export function storyCardHTML(m, { small = false } = {}) {
 }
 
 // ---------- the Moments tab ----------
+// The tab shows what it has straight away (from memory, or from the copy saved on this device)
+// and refreshes in the background. Every network call has a time limit, so it can never hang on
+// "Loading" forever; if loading fails you get the reason and a "Try again" button.
+const STALE_MS = 45000;
+let inflight = null;     // the running refresh, shared by everyone who asks for one
+let lastAttempt = 0;
+let cacheTried = false;
+const viewEl = () => document.getElementById('view');
+const onMomentsTab = () => ctx.currentTab() === 'moments';
+const cacheKey = (uid) => 'moments:' + uid;
+
+function skeleton(text) {
+  return `<div class="m-skel" aria-busy="true">
+    <div class="me-line"><span class="skel circle"></span><div><span class="skel line w40"></span><span class="skel line w25"></span></div></div>
+    <div class="rings">${'<span class="skel ring-skel"></span>'.repeat(4)}</div>
+    <span class="skel block"></span>
+    <span class="skel block tall"></span>
+    <p class="small muted center">${text}</p>
+  </div>`;
+}
+
+function dropExpired(groups) {
+  const now = Date.now();
+  return (groups || []).map((g) => ({ ...g, items: g.items.filter((m) => m.expiresAt > now) })).filter((g) => g.items.length);
+}
+
+function saveCache() {
+  if (!data.uid || !data.loaded) return;
+  idbSet(cacheKey(data.uid), { profile: data.profile, groups: data.groups, friends: data.friends, board: data.board, savedAt: Date.now() });
+}
+
 export async function renderMoments(view) {
   const st = ctx.status();
   if (!st.signedIn) {
+    if (st.restoring) { view.innerHTML = skeleton('Signing you in…'); return; }
     view.innerHTML = `
       <section class="moments-hero">
         <div class="hero-cards">
@@ -91,35 +124,89 @@ export async function renderMoments(view) {
     view.querySelector('#momentsSignIn').onclick = () => ctx.signIn();
     return;
   }
-
-  if (data.profile === undefined || loading) {
-    view.innerHTML = '<p class="muted center pad">Loading moments…</p>';
-    if (!loading) await refresh(view);
+  const me = ctx.uid();
+  if (data.uid && data.uid !== me) resetMoments();
+  if (!data.loaded && !cacheTried) {
+    cacheTried = true;
+    view.innerHTML = skeleton('Loading moments…');
+    const cached = await idbGet(cacheKey(me));
+    if (cached && !data.loaded && ctx.uid() === me) {
+      Object.assign(data, cached, { uid: me, groups: dropExpired(cached.groups), loaded: true });
+    }
+    if (!onMomentsTab()) { if (!data.loaded) refresh(); return; }
+  }
+  if (!data.loaded) {
+    if (data.error && !inflight) {
+      view.innerHTML = `
+        <section class="empty">
+          <div class="big">📡</div>
+          <h2>Couldn't load moments</h2>
+          <p>${esc(data.error)}</p>
+          <button class="btn primary" id="retryMoments">Try again</button>
+        </section>`;
+      view.querySelector('#retryMoments').onclick = () => { data.error = null; renderMoments(view); refresh(); };
+      return;
+    }
+    view.innerHTML = skeleton('Loading moments…');
+    refresh();
     return;
   }
-  if (!data.profile) return renderUsernameSetup(view);
-  draw(view);
+  if (!data.profile) {
+    renderUsernameSetup(view);
+  } else {
+    draw(view);
+  }
+  if (Date.now() - lastAttempt > STALE_MS) refresh();
 }
 
-export async function refresh(view) {
-  loading = true;
-  try {
-    data.profile = await social.myProfile(true);
-    if (data.profile) {
-      ctx.pushStats().catch(() => {});
-      const [groups, friends] = await Promise.all([social.loadMoments(), social.loadFriendships(true)]);
-      data.groups = groups;
-      data.friends = friends;
+// Redraw the tab with new data, unless the person is in the middle of typing there.
+function redraw() {
+  const v = viewEl();
+  if (!v || !onMomentsTab()) return;
+  const a = document.activeElement;
+  if (a && v.contains(a) && a.matches('input, textarea')) return;
+  if (v.querySelector('#unameForm') && !data.profile) return;
+  if (v.querySelector('.add-friend input')?.value) return;
+  renderMoments(v);
+}
+
+function setSpinning(on) {
+  const b = document.getElementById('refreshMoments');
+  if (b) b.classList.toggle('spinning', on);
+}
+
+export function refresh() {
+  if (!ctx.status().signedIn) return Promise.resolve();
+  if (inflight) return inflight;
+  lastAttempt = Date.now();
+  setSpinning(true);
+  const me = ctx.uid();
+  inflight = (async () => {
+    let changed = false;
+    try {
+      const [profile, groups, friends] = await Promise.all([social.myProfile(true), social.loadMoments(), social.loadFriendships(true)]);
+      if (ctx.uid() !== me) return;
+      Object.assign(data, { uid: me, profile, groups, friends, loaded: true, error: null });
       ctx.onSocial({ friends: friends.friends.length, incoming: friends.incoming.length, unseen: unseenCount() });
-      data.board = await social.leaderboard().catch(() => []);
+      saveCache();
+      changed = true;
+      if (profile) {
+        ctx.pushStats().catch(() => {});
+        social.leaderboard().then((board) => {
+          if (ctx.uid() !== me) return;
+          data.board = board; saveCache(); redraw();
+        }).catch(() => {});
+      }
+    } catch (e) {
+      data.error = errText(e);
+      changed = true;
+    } finally {
+      inflight = null;
+      setSpinning(false);
     }
-    data.error = null;
-  } catch (e) {
-    data.error = errText(e);
-    if (data.profile === undefined) data.profile = null;
-  }
-  loading = false;
-  if (view && view.isConnected && ctx.currentTab() === 'moments') renderMoments(view);
+    if (changed) redraw();
+  })();
+  return inflight;
 }
 
 function myUid() { return ctx.uid(); }
@@ -220,7 +307,8 @@ function draw(view) {
       <p class="small muted">Reviews this week (Monday–Sunday).</p>
     </section>` : ''}`;
 
-  view.querySelector('#refreshMoments').onclick = () => { data.profile = undefined; renderMoments(view); };
+  view.querySelector('#refreshMoments').onclick = () => { data.error = null; refresh(); };
+  if (inflight) setSpinning(true);
   view.querySelector('#editProfile').onclick = () => renderUsernameSetup(view, true);
   view.querySelector('#shareWord').onclick = () => openComposer({});
   view.querySelector('#sharePhoto').onclick = () => openComposer({ withPhoto: true });
@@ -318,7 +406,9 @@ function renderUsernameSetup(view, editing = false) {
       data.profile = await social.claimUsername(form.u.value, { avatar, color: '' }, ctx.publicStats());
       ctx.onUsername();
       ctx.toast(`Hej @${data.profile.username}! 👋`);
-      data.profile = undefined;
+      data.loaded = true;
+      data.uid = ctx.uid();
+      saveCache();
       renderMoments(view);
     } catch (err) {
       msg.className = 'small error';
@@ -450,12 +540,19 @@ export function openComposer({ wordObj = null, withPhoto = false } = {}) {
     btn.disabled = true;
     btn.textContent = 'Sharing…';
     try {
-      await social.postMoment(m);
+      const posted = await social.postMoment(m);
       close();
       ctx.onPosted();
       ctx.toast('Shared with your friends ✨');
-      data.profile = undefined; // reload Moments tab
-      if (ctx.currentTab() === 'moments') ctx.rerender();
+      // show it right away; the next refresh brings in everything else
+      let mineG = data.groups.find((g) => g.mine);
+      if (!mineG) {
+        mineG = { author: posted.author, username: posted.username, avatar: posted.avatar, mine: true, items: [] };
+        data.groups.unshift(mineG);
+      }
+      mineG.items.push(posted);
+      saveCache();
+      redraw();
     } catch (err) {
       ctx.toast(errText(err));
       btn.disabled = false;
@@ -578,5 +675,10 @@ function openViewer(groupIndex, view) {
   show();
 }
 
-export function resetMoments() { data = { profile: undefined, groups: [], friends: null, board: [] }; }
+export function resetMoments() {
+  if (data.uid) idbDel(cacheKey(data.uid));
+  data = { profile: undefined, groups: [], friends: null, board: [], loaded: false, uid: null, error: null };
+  cacheTried = false;
+  lastAttempt = 0;
+}
 export function socialCounts() { return { friends: data.friends ? data.friends.friends.length : 0 }; }

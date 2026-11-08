@@ -12,7 +12,40 @@ let hooks = null;                      // { getState, applyState, onStatus }
 let pushTimer = null;
 let syncing = null;
 
-export const status = { available: true, signedIn: false, user: null, syncing: false, lastSync: null, error: null };
+export const status = { available: true, signedIn: false, restoring: false, user: null, syncing: false, lastSync: null, error: null };
+
+const NET_TIMEOUT = 12000;
+let hiddenAt = 0;
+
+// Firestore on iPhone can keep a dead connection after the app has been in the background, and
+// requests then wait forever. Turning the network off and on again opens a fresh connection.
+export async function resetNetwork() {
+  if (!fb) return;
+  try { await fb.F.disableNetwork(fb.db); } catch { /* ignore */ }
+  try { await fb.F.enableNetwork(fb.db); } catch { /* ignore */ }
+}
+
+function timeout(promise, ms) {
+  let t;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { t = setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'timeout' })), ms); }),
+  ]).finally(() => clearTimeout(t));
+}
+
+// Run a Firestore request with a time limit. If it hangs, reset the connection and try once more.
+// Writes are not sent twice: after a reset we keep waiting for the same write, which Firestore resends.
+export async function net(fn, ms = NET_TIMEOUT, { write = false } = {}) {
+  const first = fn();
+  try {
+    return await timeout(first, ms);
+  } catch (e) {
+    if (e.code !== 'timeout' && e.code !== 'unavailable') throw e;
+    if (e.code === 'unavailable' && write) throw e;
+    await resetNetwork();
+    return timeout(write ? first : fn(), ms + 8000);
+  }
+}
 
 function emit() { if (hooks) hooks.onStatus({ ...status }); }
 function setFlag(on) { try { on ? localStorage.setItem(FLAG, '1') : localStorage.removeItem(FLAG); } catch { /* ignore */ } }
@@ -40,6 +73,7 @@ async function loadSdk() {
     }
   }
   status.available = false;
+  status.restoring = false;
   status.error = 'Could not reach the sign-in service. Check your internet connection.';
   emit();
   throw lastErr;
@@ -47,6 +81,7 @@ async function loadSdk() {
 
 function onAuth(user) {
   status.signedIn = !!user;
+  status.restoring = false;
   status.user = user ? { name: user.displayName || '', email: user.email || '', photo: user.photoURL || '' } : null;
   setFlag(!!user);
   emit();
@@ -55,14 +90,18 @@ function onAuth(user) {
 
 export async function initSync(h) {
   hooks = h;
+  status.restoring = hasFlag();
   emit();
   if (hasFlag()) {
     try { await loadSdk(); } catch { /* offline: stay local, retry later */ }
   }
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && status.signedIn) syncNow();
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (!status.signedIn) return;
+    if (hiddenAt && Date.now() - hiddenAt > 30000) await resetNetwork(); // back from the background
+    syncNow();
   });
-  window.addEventListener('online', () => { if (status.signedIn) syncNow(); });
+  window.addEventListener('online', async () => { if (status.signedIn) { await resetNetwork(); syncNow(); } });
 }
 
 function friendlyAuthError(e) {
@@ -115,13 +154,13 @@ export function syncNow() {
   emit();
   const ref = userDoc();
   const email = fb.auth.currentUser.email || '';
-  syncing = fb.F.runTransaction(fb.db, async (tx) => {
+  syncing = net(() => fb.F.runTransaction(fb.db, async (tx) => {
     const snap = await tx.get(ref);
     const remote = snap.exists() ? decode(snap.data()) : null;
     const merged = mergeStates(hooks.getState(), remote);
     tx.set(ref, { ...encode(merged), email, updatedAt: fb.F.serverTimestamp() });
     return merged;
-  }).then((merged) => {
+  }), 20000).then((merged) => {
     hooks.applyState(merged);
     status.lastSync = Date.now();
     status.error = null;

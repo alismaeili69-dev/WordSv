@@ -197,12 +197,16 @@ function applySynced(remoteMerged) {
 let lastSocialRefresh = 0;
 const lastSocial = { incoming: 0 };
 function onSyncStatus(st) {
+  const authChanged = syncStatus.signedIn !== st.signedIn || syncStatus.restoring !== st.restoring;
   if (syncStatus.signedIn && !st.signedIn) { resetMoments(); social.resetCache(); setMomentsBadge(0); }
-  if (st.signedIn && st.lastSync && !st.syncing && Date.now() - lastSocialRefresh > 120000) {
+  // keep the Moments badge fresh: right after sign-in, then at most every 2 minutes
+  if (st.signedIn && (!syncStatus.signedIn || Date.now() - lastSocialRefresh > 120000)) {
     lastSocialRefresh = Date.now();
-    refreshMoments(tab === 'moments' ? view : null).catch(() => {});
+    syncStatus = st;
+    refreshMoments().catch(() => {});
   }
   syncStatus = st;
+  if (authChanged && tab === 'moments') renderMoments(view);
   updateChrome();
   const box = document.getElementById('account');
   if (box) renderAccount(box);
