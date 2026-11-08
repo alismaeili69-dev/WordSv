@@ -5,9 +5,11 @@
 //   profiles/{uid}        { username, avatar, color, streak, words, mastered, weekReviews, weekKey, updatedAt }
 //   friendships/{a_b}     { users:[a,b], names:{a,b}, avatars, requestedBy, status:'pending'|'accepted', createdAt }
 //   moments/{id}          { author, username, avatar, word, translation, context, contextEn, note, emoji,
-//                           theme, font, align, level, wordId, audience:[uids], createdAt, expiresAt,
+//                           theme, font, align, level, wordId, photo (JPEG data URL), scrim,
+//                           audience:[uids], createdAt, expiresAt,
 //                           reactions:{uid:emoji}, seen:{uid:true} }
 import { firebase, currentUser } from './sync.js';
+import { isStoryPhoto } from './photo.js';
 
 export const USERNAME_RE = /^[a-z0-9_.]{3,20}$/;
 export const MOMENT_HOURS = 24;
@@ -170,6 +172,8 @@ export async function postMoment(m) {
     contextEn: clip('contextEn'),
     note: clip('note'),
     emoji: String(m.emoji || '').slice(0, 8),
+    photo: isStoryPhoto(m.photo) ? m.photo : '',
+    scrim: ['dark', 'light', 'clean'].includes(m.scrim) ? m.scrim : 'dark',
     theme: m.theme || 'fika',
     font: m.font || 'sans',
     align: m.align === 'left' ? 'left' : 'center',
@@ -181,7 +185,7 @@ export async function postMoment(m) {
     reactions: {},
     seen: {},
   };
-  if (!doc.word) throw Object.assign(new Error('Write a word first.'), { code: 'empty' });
+  if (!doc.word && !doc.photo) throw Object.assign(new Error('Write a word or add a photo first.'), { code: 'empty' });
   const ref = await F.addDoc(F.collection(db, 'moments'), doc);
   return { id: ref.id, ...doc };
 }

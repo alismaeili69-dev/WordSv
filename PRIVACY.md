@@ -19,7 +19,9 @@ If you pick a username in the Moments tab:
 
 - your **username, avatar emoji** and simple stats (streak, number of words, reviews this week) are visible to other signed-in WordSv users who look you up or are your friends;
 - friend requests and friendships store both usernames;
-- a **moment** you share (word, translation, sentences, note, style) is visible only to the people who were your friends when you posted it, together with their reactions and who has seen it. Moments disappear after 24 hours and are deleted from the database the next time you open the app.
+- a **moment** you share (word, translation, sentences, note, style, and an optional photo) is visible only to the people who were your friends when you posted it, together with their reactions and who has seen it. Moments disappear after 24 hours and are deleted from the database the next time you open the app.
+
+Photos are resized and re-saved on your phone before upload; this removes hidden metadata such as GPS location. A photo is stored inside its moment and deleted together with it.
 
 Your email address is never shown to other users.
 

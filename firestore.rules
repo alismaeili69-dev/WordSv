@@ -61,14 +61,18 @@ service cloud.firestore {
       allow delete: if signedIn() && me() in resource.data.users;
     }
 
-    // Moments (24-hour word stories), visible to the author's friends at posting time.
+    // Moments (24-hour word stories, optionally with a small JPEG photo stored inline),
+    // visible to the author's friends at posting time.
     match /moments/{id} {
       allow read: if signedIn() && me() in resource.data.audience;
       allow create: if signedIn()
         && request.resource.data.author == me()
         && me() in request.resource.data.audience
         && request.resource.data.audience.size() <= 300
-        && shortText(request.resource.data.word, 60) && request.resource.data.word.size() > 0
+        && request.resource.data.keys().hasOnly(['author', 'username', 'avatar', 'word', 'translation', 'context', 'contextEn', 'note', 'emoji', 'theme', 'font', 'align', 'level', 'wordId', 'photo', 'scrim', 'audience', 'createdAt', 'expiresAt', 'reactions', 'seen'])
+        && shortText(request.resource.data.word, 60)
+        && shortText(request.resource.data.photo, 460000)
+        && (request.resource.data.word.size() > 0 || request.resource.data.photo.size() > 0)
         && shortText(request.resource.data.translation, 120)
         && shortText(request.resource.data.context, 220)
         && shortText(request.resource.data.contextEn, 220)

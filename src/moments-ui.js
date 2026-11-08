@@ -1,5 +1,6 @@
 // Moments: share the words you learn as 24-hour, Instagram-style text stories with friends.
 import * as social from './social.js';
+import { loadImage, renderStoryImage, isStoryPhoto } from './photo.js';
 
 export const THEMES = {
   fika:      { name: 'Fika',      bg: 'linear-gradient(160deg,#f6e7cf 0%,#d8b083 100%)', fg: '#3b2414', accent: '#8a4b20' },
@@ -21,6 +22,7 @@ export const FONTS = {
 const EMOJIS = ['', '☕', '💡', '😂', '❤️', '🤯', '🎉', '📚', '🗣️', '🎧', '🍓', '❄️', '☀️', '🌧️', '🚆', '💼'];
 const REACTIONS = ['❤️', '🔥', '😂', '🤯', '👏', '🇸🇪'];
 const STORY_MS = 7000;
+const SCRIMS = { dark: 'Dark box', light: 'Light box', clean: 'Shadow only' };
 
 let ctx = null;          // app helpers
 let data = { profile: undefined, groups: [], friends: null, board: [] };
@@ -48,19 +50,26 @@ function errText(e) {
 export function storyCardHTML(m, { small = false } = {}) {
   const t = THEMES[m.theme] || THEMES.fika;
   const f = FONTS[m.font] || FONTS.sans;
+  const photo = isStoryPhoto(m.photo);
+  const scrim = SCRIMS[m.scrim] ? m.scrim : 'dark';
   const len = (m.word || '').length;
-  const wordSize = len > 22 ? 34 : len > 14 ? 44 : len > 9 ? 54 : 64;
+  const wordSize = photo ? (len > 22 ? 28 : len > 14 ? 36 : len > 9 ? 44 : 52) : (len > 22 ? 34 : len > 14 ? 44 : len > 9 ? 54 : 64);
+  const colors = photo
+    ? (scrim === 'light' ? '--fg:#13202b;--accent:#006aa7' : '--fg:#ffffff;--accent:#fecc02')
+    : `--sbg:${t.bg};--fg:${t.fg};--accent:${t.accent}`;
+  const hasText = m.word || m.translation || m.context || m.note || m.emoji;
   return `
-    <div class="story-card ${t.panel ? 'panelled' : ''} ${small ? 'small' : ''}" style="--sbg:${t.bg};--fg:${t.fg};--accent:${t.accent};--font:${f.css};--weight:${f.weight};text-align:${m.align === 'left' ? 'left' : 'center'}">
-      <div class="story-inner">
+    <div class="story-card ${!photo && t.panel ? 'panelled' : ''} ${photo ? `has-photo scrim-${scrim}` : ''} ${small ? 'small' : ''}" style="${colors};--font:${f.css};--weight:${f.weight};text-align:${m.align === 'left' ? 'left' : 'center'}">
+      ${photo ? `<img class="story-photo" src="${esc(m.photo)}" alt="${esc(m.word ? `Photo: ${m.word}` : 'Photo')}">` : ''}
+      ${photo && !hasText ? '' : `<div class="story-inner">
         ${m.emoji ? `<div class="story-emoji">${esc(m.emoji)}</div>` : ''}
-        ${m.level ? `<div class="story-level">${esc(m.level)}</div>` : ''}
-        <div class="story-word ${f.upper ? 'upper' : ''}" style="font-size:${wordSize}px">${esc(m.word || 'ord')}</div>
+        ${m.level && m.word ? `<div class="story-level">${esc(m.level)}</div>` : ''}
+        ${m.word || !photo ? `<div class="story-word ${f.upper ? 'upper' : ''}" style="font-size:${wordSize}px">${esc(m.word || 'ord')}</div>` : ''}
         ${m.translation ? `<div class="story-translation">${esc(m.translation)}</div>` : ''}
         ${m.context ? `<div class="story-context">“${esc(m.context)}”${m.contextEn ? `<span>${esc(m.contextEn)}</span>` : ''}</div>` : ''}
         ${m.note ? `<div class="story-note">${esc(m.note)}</div>` : ''}
         ${m.username ? `<div class="story-by">@${esc(m.username)}</div>` : ''}
-      </div>
+      </div>`}
     </div>`;
 }
 
@@ -114,6 +123,13 @@ export async function refresh(view) {
 
 function myUid() { return ctx.uid(); }
 
+function ringFace(g) {
+  const withPhoto = [...g.items].reverse().find((m) => isStoryPhoto(m.photo));
+  return withPhoto
+    ? `<span class="ring-avatar photo"><img src="${esc(withPhoto.photo)}" alt=""><b>${esc(g.avatar || '🙂')}</b></span>`
+    : `<span class="ring-avatar">${esc(g.avatar || '🙂')}</span>`;
+}
+
 function unseenCount() {
   const me = myUid();
   return data.groups.filter((g) => !g.mine && g.items.some((m) => !(m.seen || {})[me])).length;
@@ -130,7 +146,7 @@ function draw(view) {
   const ring = (g) => {
     const unseen = !g.mine && g.items.some((m) => !(m.seen || {})[me]);
     return `<button class="ring-item" data-author="${esc(g.author)}">
-      <span class="ring ${unseen ? 'unseen' : g.mine ? 'mine' : 'seen'}"><span class="ring-avatar">${esc(g.avatar || '🙂')}</span></span>
+      <span class="ring ${unseen ? 'unseen' : g.mine ? 'mine' : 'seen'}">${ringFace(g)}</span>
       <span class="ring-name">${g.mine ? 'You' : '@' + esc(g.username)}</span>
     </button>`;
   };
@@ -153,7 +169,10 @@ function draw(view) {
       ${!others.length ? `<div class="rings-empty small muted">${fr.friends.length ? 'No stories from friends right now.' : 'Add friends to see their stories here.'}</div>` : ''}
     </div>
 
-    <button class="btn primary wide share-cta" id="shareWord">✨ Share a word you learned</button>
+    <div class="share-row">
+      <button class="btn primary share-cta" id="shareWord">✨ Share a word you learned</button>
+      <button class="btn ghost share-cam" id="sharePhoto" aria-label="Share a photo">📷</button>
+    </div>
 
     ${wotd ? `
     <section class="panel wotd">
@@ -203,6 +222,7 @@ function draw(view) {
   view.querySelector('#refreshMoments').onclick = () => { data.profile = undefined; renderMoments(view); };
   view.querySelector('#editProfile').onclick = () => renderUsernameSetup(view, true);
   view.querySelector('#shareWord').onclick = () => openComposer({});
+  view.querySelector('#sharePhoto').onclick = () => openComposer({ withPhoto: true });
   const nm = view.querySelector('#newMoment'); if (nm) nm.onclick = () => openComposer({});
   const vm = view.querySelector('#viewMine'); if (vm) vm.onclick = () => openViewer(data.groups.indexOf(mine), view);
   view.querySelectorAll('.ring-item[data-author]').forEach((b) => b.onclick = () => {
@@ -308,9 +328,10 @@ function renderUsernameSetup(view, editing = false) {
 }
 
 // ---------- composer ----------
-export function openComposer({ wordObj = null } = {}) {
+export function openComposer({ wordObj = null, withPhoto = false } = {}) {
   if (!ctx.status().signedIn) { ctx.toast('Sign in (Moments tab) to share moments'); return; }
-  const m = { word: '', translation: '', context: '', contextEn: '', note: '', emoji: '', theme: 'fika', font: 'sans', align: 'center', level: '', wordId: '' };
+  const m = { word: '', translation: '', context: '', contextEn: '', note: '', emoji: '', theme: 'fika', font: 'sans', align: 'center', level: '', wordId: '', photo: '', scrim: 'dark' };
+  const pic = { img: null, fit: 'cover', focusY: 0.5 };
   const fill = (w) => {
     const ex = (w.examples || [])[0] || {};
     Object.assign(m, { word: w.sv, translation: w.en, context: ex.sv || '', contextEn: ex.en || '', level: w.level || '', wordId: w.id });
@@ -328,6 +349,21 @@ export function openComposer({ wordObj = null } = {}) {
     <div class="composer-body">
       <div class="composer-preview" id="preview"></div>
       <div class="composer-form">
+        <div class="photo-bar">
+          <label class="btn ghost sm photo-btn">📷 Camera<input type="file" accept="image/*" capture="environment" data-photo-input hidden></label>
+          <label class="btn ghost sm photo-btn">🖼️ Photo library<input type="file" accept="image/*" data-photo-input hidden></label>
+          <span class="small muted" id="photoStatus"></span>
+        </div>
+        <div class="photo-tools" hidden>
+          <div class="chips">
+            <button type="button" class="chip" data-fit="cover">Fill</button>
+            <button type="button" class="chip" data-fit="contain">Whole photo</button>
+            <button type="button" class="chip" data-move="-1" aria-label="Show more of the top">▲</button>
+            <button type="button" class="chip" data-move="1" aria-label="Show more of the bottom">▼</button>
+            <button type="button" class="chip" data-remove-photo>✕ Remove photo</button>
+          </div>
+          <div class="chips">${Object.entries(SCRIMS).map(([k, v]) => `<button type="button" class="chip" data-scrim="${k}">${v}</button>`).join('')}</div>
+        </div>
         ${today.length ? `<div class="small muted">Your words today</div><div class="chips today-chips">${today.slice(0, 12).map((w) => `<button type="button" class="chip" data-pick="${esc(w.id)}">${esc(w.sv)}</button>`).join('')}</div>` : ''}
         <label>Word<input name="word" maxlength="${social.LIMITS.word}" placeholder="t.ex. lagom" autocomplete="off" list="wordSuggest"></label>
         <datalist id="wordSuggest"></datalist>
@@ -337,11 +373,11 @@ export function openComposer({ wordObj = null } = {}) {
         <label>Your note<textarea name="note" rows="2" maxlength="${social.LIMITS.note}" placeholder="Where did you hear it? A memory trick? 😄"></textarea></label>
         <div class="small muted">Emoji</div>
         <div class="emoji-row">${EMOJIS.map((e) => `<button type="button" class="emoji-pick" data-emoji="${e}">${e || '∅'}</button>`).join('')}</div>
-        <div class="small muted">Style</div>
+        <div class="small muted" data-theme-label>Style</div>
         <div class="theme-row">${Object.entries(THEMES).map(([k, t]) => `<button type="button" class="theme-pick" data-theme="${k}" style="background:${t.bg}" title="${t.name}" aria-label="${t.name}"></button>`).join('')}</div>
         <div class="chips">${Object.entries(FONTS).map(([k, f]) => `<button type="button" class="chip font-pick" data-font="${k}" style="font-family:${f.css};font-weight:${f.weight}">${f.name}</button>`).join('')}
           <button type="button" class="chip" data-align>⇆ Align</button></div>
-        <p class="small muted" id="audience">Visible to your friends for 24 hours.</p>
+        <p class="small muted" id="audience">Visible to your friends for 24 hours. Photos are resized and their location data removed before sharing.</p>
       </div>
     </div>`;
   document.body.appendChild(dlg);
@@ -356,7 +392,36 @@ export function openComposer({ wordObj = null } = {}) {
     dlg.querySelectorAll('[data-theme]').forEach((b) => b.classList.toggle('on', b.dataset.theme === m.theme));
     dlg.querySelectorAll('[data-font]').forEach((b) => b.classList.toggle('on', b.dataset.font === m.font));
     dlg.querySelectorAll('[data-emoji]').forEach((b) => b.classList.toggle('on', b.dataset.emoji === m.emoji));
+    const hasPhoto = !!m.photo;
+    dlg.querySelector('.photo-tools').hidden = !hasPhoto;
+    dlg.querySelector('.theme-row').hidden = hasPhoto;
+    dlg.querySelector('[data-theme-label]').textContent = hasPhoto ? 'Text style' : 'Style';
+    dlg.querySelectorAll('[data-fit]').forEach((b) => b.classList.toggle('on', b.dataset.fit === pic.fit));
+    dlg.querySelectorAll('[data-scrim]').forEach((b) => b.classList.toggle('on', b.dataset.scrim === m.scrim));
+    dlg.querySelectorAll('[data-move]').forEach((b) => { b.hidden = pic.fit !== 'cover'; });
   };
+  const photoStatus = (t, isErr) => { const el = dlg.querySelector('#photoStatus'); el.textContent = t; el.className = 'small ' + (isErr ? 'error' : 'muted'); };
+  const redrawPhoto = () => {
+    try { m.photo = renderStoryImage(pic.img, { fit: pic.fit, focusY: pic.focusY }); photoStatus(`${Math.round(m.photo.length * 0.75 / 1024)} KB`); }
+    catch (e) { m.photo = ''; photoStatus(e.message, true); }
+    preview();
+  };
+  dlg.querySelectorAll('[data-photo-input]').forEach((input) => input.onchange = async () => {
+    const file = input.files && input.files[0];
+    input.value = '';
+    if (!file) return;
+    photoStatus('Preparing photo…');
+    try {
+      pic.img = await loadImage(file);
+      pic.fit = pic.img.naturalWidth > pic.img.naturalHeight ? 'contain' : 'cover';
+      pic.focusY = 0.5;
+      redrawPhoto();
+    } catch (e) { photoStatus(e.message, true); }
+  });
+  dlg.querySelectorAll('[data-fit]').forEach((b) => b.onclick = () => { pic.fit = b.dataset.fit; redrawPhoto(); });
+  dlg.querySelectorAll('[data-move]').forEach((b) => b.onclick = () => { pic.focusY = Math.min(1, Math.max(0, pic.focusY + Number(b.dataset.move) * 0.15)); redrawPhoto(); });
+  dlg.querySelectorAll('[data-scrim]').forEach((b) => b.onclick = () => { m.scrim = b.dataset.scrim; preview(); });
+  dlg.querySelector('[data-remove-photo]').onclick = () => { m.photo = ''; pic.img = null; photoStatus(''); preview(); };
   for (const k of ['word', 'translation', 'context', 'contextEn', 'note']) {
     f(k).oninput = () => {
       m[k] = f(k).value;
@@ -380,7 +445,7 @@ export function openComposer({ wordObj = null } = {}) {
   dlg.querySelector('[data-x="close"]').onclick = close;
   dlg.querySelector('[data-x="post"]').onclick = async (e) => {
     const btn = e.currentTarget;
-    if (!m.word.trim()) { f('word').focus(); ctx.toast('Write a word first'); return; }
+    if (!m.word.trim() && !m.photo) { f('word').focus(); ctx.toast('Write a word or add a photo first'); return; }
     btn.disabled = true;
     btn.textContent = 'Sharing…';
     try {
@@ -399,7 +464,8 @@ export function openComposer({ wordObj = null } = {}) {
   // load profile for the "@username" on the preview if needed
   if (data.profile === undefined) social.myProfile().then((p) => { data.profile = p; preview(); if (!p) { close(); ctx.toast('Pick a username in the Moments tab first'); } }).catch(() => {});
   sync();
-  setTimeout(() => (m.word ? f('note') : f('word')).focus(), 50);
+  if (withPhoto) dlg.querySelector('[data-photo-input][capture]').click();
+  else setTimeout(() => (m.word ? f('note') : f('word')).focus(), 50);
 }
 
 // ---------- viewer ----------
