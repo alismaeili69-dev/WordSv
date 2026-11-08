@@ -45,6 +45,7 @@ Progress is stored in your browser on that device (`localStorage`). Optionally, 
 Sources and licences:
 - Swedish Kelly list: Volodina & Johansson Kokkinakis (2012), Språkbanken Text, University of Gothenburg. CC BY 4.0. https://spraakbanken.gu.se/en/resources/kelly
 - Folkets lexikon (The People's Dictionary), KTH. CC BY-SA 2.5. https://folkets-lexikon.csc.kth.se/folkets/
+- Bricolage Grotesque typeface by Mathieu Triay, SIL Open Font License 1.1 (`fonts/OFL.txt`). Subset in `fonts/bricolage.woff2`.
 
 Because it includes Folkets lexikon content, `data/kelly.json` is shared under **CC BY-SA 2.5**.
 

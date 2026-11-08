@@ -1,4 +1,5 @@
 // Moments: share the words you learn as 24-hour, Instagram-style text stories with friends.
+import { closeOverlay } from './motion.js';
 import * as social from './social.js';
 import { loadImage, renderStoryImage, isStoryPhoto } from './photo.js';
 
@@ -441,7 +442,7 @@ export function openComposer({ wordObj = null, withPhoto = false } = {}) {
   dlg.querySelectorAll('[data-font]').forEach((b) => b.onclick = () => { m.font = b.dataset.font; preview(); });
   dlg.querySelectorAll('[data-emoji]').forEach((b) => b.onclick = () => { m.emoji = b.dataset.emoji; preview(); });
   dlg.querySelector('[data-align]').onclick = () => { m.align = m.align === 'left' ? 'center' : 'left'; preview(); };
-  const close = () => { dlg.remove(); document.body.classList.remove('no-scroll'); };
+  const close = () => { closeOverlay(dlg, 300); document.body.classList.remove('no-scroll'); };
   dlg.querySelector('[data-x="close"]').onclick = close;
   dlg.querySelector('[data-x="post"]').onclick = async (e) => {
     const btn = e.currentTarget;
@@ -484,7 +485,7 @@ function openViewer(groupIndex, view) {
 
   const close = () => {
     clearTimeout(timer);
-    dlg.remove();
+    closeOverlay(dlg);
     document.body.classList.remove('no-scroll');
     document.removeEventListener('keydown', onKey);
     ctx.onSocial({ unseen: unseenCount() });

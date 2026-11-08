@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <title>WordSv</title>
   <meta name="description" content="Learn Swedish B2/C1 vocabulary with spaced repetition">
-  <meta name="theme-color" content="#006AA7">
+  <meta name="theme-color" content="#006AA7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0E3350" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,6 +14,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preload" href="fonts/bricolage.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -24,6 +26,7 @@
   <main id="view"></main>
 
   <nav class="tabbar">
+    <span class="tab-glow" aria-hidden="true"></span>
     <button data-tab="learn">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       <span>Learn</span>

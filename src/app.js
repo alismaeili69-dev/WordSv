@@ -6,6 +6,7 @@ import { mergeStates } from './merge.js';
 import * as sync from './sync.js';
 import * as social from './social.js';
 import { BADGES, newlyEarned, badgeById, wordOfDay } from './badges.js';
+import { pageTransition, closeOverlay, fadeAway, SPEAKER_SVG } from './motion.js';
 import { initMoments, renderMoments, openComposer, refresh as refreshMoments, resetMoments, socialCounts } from './moments-ui.js';
 
 const view = document.getElementById('view');
@@ -89,8 +90,7 @@ function celebrate(msg) {
   t.className = 'toast badge-toast';
   t.textContent = msg;
   document.body.appendChild(t);
-  setTimeout(() => t.classList.add('out'), 2600);
-  setTimeout(() => t.remove(), 3000);
+  setTimeout(() => fadeAway(t), 2600);
 }
 
 function confetti() {
@@ -191,7 +191,7 @@ function applySynced(remoteMerged) {
   reindex();
   updateChrome();
   const changed = before !== JSON.stringify([state.progress, state.custom, state.settings]);
-  if (changed && !document.querySelector('.sheet-backdrop') && !(tab === 'review' && view.querySelector('.card.revealed'))) go(tab);
+  if (changed && !document.querySelector('.sheet-backdrop:not(.closing)') && !(tab === 'review' && view.querySelector('.card.revealed'))) go(tab);
 }
 
 let lastSocialRefresh = 0;
@@ -251,11 +251,19 @@ function updateChrome() {
   dueBadge.textContent = due > 99 ? '99+' : due;
   const total = Object.keys(state.progress).length;
   const streak = streakDays(state.log);
-  const cloud = syncStatus.signedIn ? (syncStatus.syncing ? '⟳ ' : syncStatus.error ? '⚠︎ ' : '☁︎ ') : '';
-  statsEl.textContent = `${cloud}${streak ? `🔥 ${streak} · ` : ''}${total} words`;
+  const cloud = syncStatus.signedIn ? (syncStatus.syncing ? '⟳' : syncStatus.error ? '⚠︎' : '☁︎') : '';
+  const pills = [
+    cloud && `<span class="stat cloud" aria-label="${syncStatus.error ? 'Sync problem' : 'Synced'}">${cloud}</span>`,
+    streak && `<span class="stat streak" aria-label="${streak} day streak">🔥 ${streak}</span>`,
+    `<span class="stat">${total} words</span>`,
+  ].filter(Boolean).join('');
+  if (statsEl.dataset.html !== pills) { statsEl.innerHTML = pills; statsEl.dataset.html = pills; }
   statsEl.title = syncStatus.signedIn ? (syncStatus.error || `Synced as ${syncStatus.user?.email || ''}`) : '';
   const active = tab === 'settings' ? 'me' : tab;
-  document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === active));
+  document.querySelectorAll('.tabbar button').forEach((b, i) => {
+    b.classList.toggle('active', b.dataset.tab === active);
+    if (b.dataset.tab === active) document.querySelector('.tabbar').style.setProperty('--i', i);
+  });
 }
 
 // ---------- speech ----------
@@ -265,10 +273,16 @@ function pickVoice() {
   svVoice = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith('sv')) || null;
 }
 if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-function speak(text) {
+function speak(text, btn) {
   if (!('speechSynthesis' in window)) return;
   speechSynthesis.cancel();
+  document.querySelectorAll('.speak.talking').forEach((b) => b.classList.remove('talking'));
   const u = new SpeechSynthesisUtterance(text);
+  if (btn) {
+    btn.classList.add('talking');
+    const off = () => btn.classList.remove('talking');
+    u.onend = off; u.onerror = off; setTimeout(off, 6000);
+  }
   u.lang = 'sv-SE';
   if (svVoice) u.voice = svVoice;
   u.rate = 0.9;
@@ -291,7 +305,7 @@ function snapshot(id) {
 }
 
 function offerUndo(snap, label) {
-  hideUndo();
+  hideUndo(true);
   const bar = document.createElement('div');
   bar.className = 'undo-bar';
   bar.innerHTML = `<span>${esc(label)}</span><button type="button">↶ Undo</button>`;
@@ -301,9 +315,9 @@ function offerUndo(snap, label) {
   undoTimer = setTimeout(hideUndo, 6000);
 }
 
-function hideUndo() {
+function hideUndo(instant = false) {
   clearTimeout(undoTimer);
-  document.querySelectorAll('.undo-bar').forEach((b) => b.remove());
+  document.querySelectorAll('.undo-bar').forEach((b) => (instant ? b.remove() : fadeAway(b, 260)));
   session.undo = null;
 }
 
@@ -328,7 +342,7 @@ function cardHTML(w, { revealed, mode, card, reverse = false }) {
   const stageInfo = card ? `<span class="pill">Step ${card.stage + 1}/${INTERVALS.length}</span>` : '';
   const examples = (w.examples || []).map((ex) => `
       <li>
-        <div class="ex-sv">${esc(ex.sv)} <button class="speak mini" data-say="${esc(ex.sv)}" aria-label="Listen">🔊</button></div>
+        <div class="ex-sv">${esc(ex.sv)} <button class="speak mini" data-say="${esc(ex.sv)}" aria-label="Listen">${SPEAKER_SVG}</button></div>
         ${ex.en ? `<div class="ex-en">${esc(ex.en)}</div>` : ''}
       </li>`).join('');
   return `
@@ -345,7 +359,7 @@ function cardHTML(w, { revealed, mode, card, reverse = false }) {
       <div class="sv-part">
         <div class="word-row">
           <h1 class="word">${esc(w.sv)}</h1>
-          <button class="speak" data-say="${esc(w.sv)}" aria-label="Listen">🔊</button>
+          <button class="speak" data-say="${esc(w.sv)}" aria-label="Listen">${SPEAKER_SVG}</button>
         </div>
         ${w.forms ? `<div class="forms">${esc(w.forms)}</div>` : ''}
       </div>
@@ -359,7 +373,7 @@ function cardHTML(w, { revealed, mode, card, reverse = false }) {
 
 function wireCard(container, { onLeft, onRight, revealOnTap, onReveal }) {
   const el = container.querySelector('.card');
-  el.querySelectorAll('.speak').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); speak(b.dataset.say); }));
+  el.querySelectorAll('.speak').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); speak(b.dataset.say, b); }));
   const reveal = () => {
     if (!revealOnTap || el.classList.contains('revealed')) return;
     el.classList.add('revealed');
@@ -425,7 +439,7 @@ function renderReview() {
       <button class="btn bad" data-act="left">✗ Again</button>
       <button class="btn good" data-act="right">✓ Knew it</button>
     </div>
-    <p class="legend">Swipe right → next step · swipe left → 2 steps back<span class="kbd-hint"> · keys: ← → space, U = undo</span></p>`;
+    <p class="legend">Swipe right if you knew it, left to see it sooner.<span class="kbd-hint"> Keys: ← → space, U to undo.</span></p>`;
   if (state.settings.autoSpeak && !reverse) speak(w.sv);
   const done = (knew) => {
     const snap = snapshot(id);
@@ -545,7 +559,7 @@ function renderLearn() {
       <button class="btn ghost" data-act="known" title="Already know it: first review in 2 weeks">✓ I know it</button>
       <button class="btn primary" data-act="right">+ Add</button>
     </div>
-    <p class="legend">Swipe right to add · left to skip · “I know it” schedules the word in 2 weeks</p>`;
+    <p class="legend">Swipe right to add, left to skip. “I know it” brings the word back in two weeks.</p>`;
   if (state.settings.autoSpeak) speak(w.sv);
   wireLevelChips();
   const wb = view.querySelector('[data-wotd]');
@@ -687,15 +701,15 @@ function openWord(id, { wotd = false } = {}) {
       ${cardHTML(w, { revealed: true, mode: 'review', card: c }).replace('class="card revealed', 'class="card static revealed')}
       ${c ? `<p class="small muted center">Added ${c.added} · reviewed ${c.reviews}× · forgotten ${c.lapses}× · next ${formatDue(c.due)}</p>` : ''}
       <div class="actions">
-        ${c ? '<button class="btn ghost" data-x="remove">Remove from my words</button>'
+        ${c ? '<button class="btn ghost" data-x="remove">Remove word</button>'
             : '<button class="btn ghost" data-x="known">✓ I know it</button><button class="btn primary" data-x="add">+ Add to my words</button>'}
         <button class="btn ${c ? 'primary' : 'ghost'}" data-x="close">Close</button>
       </div>
       ${syncStatus.signedIn ? '<button class="btn ghost wide share-btn" data-x="share">✨ Share as moment</button>' : ''}
     </div>`;
   document.body.appendChild(dlg);
-  dlg.querySelectorAll('.speak').forEach((b) => b.onclick = () => speak(b.dataset.say));
-  const close = () => { dlg.remove(); document.removeEventListener('keydown', esc_); };
+  dlg.querySelectorAll('.speak').forEach((b) => b.onclick = () => speak(b.dataset.say, b));
+  const close = () => { closeOverlay(dlg); document.removeEventListener('keydown', esc_); };
   const esc_ = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', esc_);
   dlg.onclick = (e) => { if (e.target === dlg) close(); };
@@ -1024,16 +1038,24 @@ function toast(msg) {
   t.className = 'toast';
   t.textContent = msg;
   document.body.appendChild(t);
-  setTimeout(() => t.classList.add('out'), 1800);
-  setTimeout(() => t.remove(), 2200);
+  setTimeout(() => fadeAway(t), 1900);
 }
 
+const TAB_ORDER = ['learn', 'review', 'moments', 'words', 'me', 'settings'];
 function go(t) {
   if (t === 'stats') t = 'me';
-  tab = t;
-  updateChrome();
-  view.scrollTop = 0;
-  ({ learn: renderLearn, review: renderReview, moments: () => renderMoments(view), words: renderWords, me: renderMe, settings: renderSettings })[t]();
+  const from = TAB_ORDER.indexOf(tab), to = TAB_ORDER.indexOf(t);
+  const switching = from !== to && view.childElementCount > 0;
+  const render = () => {
+    tab = t;
+    updateChrome();
+    view.scrollTop = 0;
+    ({ learn: renderLearn, review: renderReview, moments: () => renderMoments(view), words: renderWords, me: renderMe, settings: renderSettings })[t]();
+    // the page itself slides in, so the card shouldn't also rise from the deck
+    if (switching) view.querySelectorAll('.stack').forEach((s) => s.classList.add('settled'));
+  };
+  if (switching) pageTransition(render, to > from ? 'fwd' : 'back');
+  else render();
 }
 
 document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('click', () => { if (b.dataset.tab !== tab) hideUndo(); go(b.dataset.tab); }));
@@ -1041,7 +1063,7 @@ document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('c
 // Keyboard shortcuts (web on a computer): ← again/skip, → knew it/add, space reveal, K I know it, U undo
 document.addEventListener('keydown', (e) => {
   if (e.target.closest('input, select, textarea') || e.metaKey && e.key !== 'z' || e.altKey) return;
-  if (document.querySelector('.sheet-backdrop, .composer, .viewer')) return;
+  if (document.querySelector('.sheet-backdrop:not(.closing), .composer:not(.closing), .viewer:not(.closing)')) return;
   const click = (sel) => { const b = view.querySelector(sel); if (b) { e.preventDefault(); b.click(); } };
   if (e.key === 'ArrowRight') click('[data-act="right"]');
   else if (e.key === 'ArrowLeft') click('[data-act="left"]');
