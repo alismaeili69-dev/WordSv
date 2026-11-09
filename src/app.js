@@ -60,7 +60,7 @@ function badgeContext() {
     bestDay: logs.reduce((t, e) => Math.max(t, e.reviews || 0), 0),
     clearedToday: !!c.cleanSweep,
     levelsTouched: LEVELS.filter((l) => levels.has(l)).length,
-    custom: state.custom.length,
+    custom: ownWords().length,
     hasUsername: !!c.hasUsername,
     friends: c.friends || 0,
     momentsPosted: c.momentsPosted || 0,
@@ -215,9 +215,11 @@ function onSyncStatus(st) {
 function reindex() {
   index = new Map();
   for (const w of bank) index.set(w.id, w);
-  for (const w of state.custom) index.set(w.id, w);
+  for (const w of state.custom) if (!w.deleted) index.set(w.id, w);
 }
 function allWords() { return [...index.values()]; }
+const isOwn = (w) => String(w.id).startsWith('custom-');
+function ownWords() { return state.custom.filter((w) => !w.deleted); }
 function wordById(id) { return index.get(id); }
 
 function logEvent(field, n = 1) {
@@ -350,11 +352,12 @@ function cardHTML(w, { revealed, mode, card, reverse = false }) {
         ${ex.en ? `<div class="ex-en">${esc(ex.en)}</div>` : ''}
       </li>`).join('');
   return `
-    <div class="card ${revealed ? 'revealed' : ''} ${reverse ? 'reverse' : ''}">
+    <div class="card ${mode === 'learn' ? 'learn' : ''} ${revealed ? 'revealed' : ''} ${reverse ? 'reverse' : ''}">
       <div class="hint hint-left">${leftLabel}</div>
       <div class="hint hint-right">${rightLabel}</div>
       <div class="card-top">
-        <span class="pill level">${esc(w.level || '')}</span>
+        ${isOwn(w) ? '<span class="pill own">✍️ Your word</span>' : ''}
+        ${w.level ? `<span class="pill level">${esc(w.level)}</span>` : ''}
         ${w.pos ? `<span class="pill">${esc(w.pos)}</span>` : ''}
         ${stageInfo}
         ${reverse ? '<span class="pill dir">EN → SV</span>' : ''}
@@ -501,14 +504,11 @@ function renderLevelPicker() {
         <button class="btn primary wide" id="startLearning" ${selected.length ? '' : 'disabled'}>Start learning</button>
         <div class="or"><span>or</span></div>
         <p class="small muted center">Already use WordSv on another device?</p>
-        <button class="btn ghost wide google-btn" id="pickerSignIn">${googleIcon()} Sign in with Google</button>
+        ${signInButtons('pickerSignIn')}
         ${syncStatus.error ? `<p class="small error center">${esc(syncStatus.error)}</p>` : ''}
       </section>`;
     wireLevelToggles(view, selected, draw);
-    view.querySelector('#pickerSignIn').onclick = async () => {
-      const ok = await sync.signIn();
-      if (!ok) draw();
-    };
+    wireSignIn(view, (ok) => { if (!ok) draw(); });
     view.querySelector('#startLearning').onclick = () => {
       state.settings.levels = selected;
       state.settings.level = 'all';
@@ -545,8 +545,10 @@ function renderLearn() {
     view.innerHTML = `
       <div class="chips">${levelChips}</div>
       <section class="empty"><div class="big">📚</div><h2>No new words here</h2>
-      <p>You've added every word${lvl === 'all' ? ' in your levels' : ' at ' + lvl}. Turn on more levels or add your own words in Settings.</p></section>`;
+      <p>You've added every word${lvl === 'all' ? ' in your levels' : ' at ' + lvl}. Turn on more levels in Settings, or add words from your own life.</p>
+      <button class="btn primary" id="addOwnEmpty">✍️ Add your own word</button></section>`;
     wireLevelChips();
+    view.querySelector('#addOwnEmpty').onclick = () => openWordEditor();
     return;
   }
 
@@ -555,6 +557,7 @@ function renderLearn() {
   const wotdBanner = wotd && !state.progress[wotd.id]
     ? `<button class="wotd-mini" data-wotd="${esc(wotd.id)}"><span>☀️ Dagens ord</span><b>${esc(wotd.sv)}</b><span class="muted">${esc(wotd.en.split(',')[0])}</span><span class="arrow">›</span></button>` : '';
   view.innerHTML = `
+    ${ownWordButton()}
     ${wotdBanner}
     <div class="chips">${levelChips}<span class="muted small">${list.length} new · ${addedToday} added today</span></div>
     <div class="stack">${cardHTML(w, { revealed: true, mode: 'learn' })}</div>
@@ -566,6 +569,7 @@ function renderLearn() {
     <p class="legend">Swipe right to add, left to skip. “I know it” brings the word back in two weeks.</p>`;
   if (state.settings.autoSpeak) speak(w.sv);
   wireLevelChips();
+  view.querySelector('#addOwn').onclick = () => openWordEditor();
   const wb = view.querySelector('[data-wotd]');
   if (wb) wb.onclick = () => openWord(wb.dataset.wotd, { wotd: true });
   const el = wireCard(view, {
@@ -603,6 +607,132 @@ function wireLevelChips() {
   });
 }
 
+// ---------- your own words ----------
+function ownWordButton() {
+  const n = ownWords().length;
+  return `
+    <button class="own-cta" id="addOwn">
+      <span class="own-icon" aria-hidden="true">✍️</span>
+      <span class="own-text"><b>Add your own word</b><small>${n ? `You've added ${n} of your own. Keep going!` : 'Words from your own life stick best.'}</small></span>
+      <span class="own-plus" aria-hidden="true">+</span>
+    </button>`;
+}
+
+const stripArticle = (s) => norm(s.trim()).replace(/^(en|ett|att)\s+/, '');
+function bankMatch(sv) {
+  const n = stripArticle(sv);
+  if (n.length < 2) return null;
+  for (const w of bank) if (stripArticle(w.sv) === n) return w;
+  return null;
+}
+
+// Add a word of your own, or edit one (pass it as `edit`). New words go straight into My words.
+function openWordEditor({ edit = null, prefill = '' } = {}) {
+  const w = edit || {};
+  const ex = w.examples || [];
+  const levels = enabledLevels();
+  const level = w.level || levels[0] || 'B1';
+  const dlg = document.createElement('div');
+  dlg.className = 'sheet-backdrop';
+  dlg.innerHTML = `
+    <form class="sheet editor" novalidate aria-label="${edit ? 'Edit your word' : 'Add your own word'}">
+      <h2>${edit ? 'Edit your word' : 'Add your own word'}</h2>
+      ${edit ? '' : '<p class="small muted">It goes straight into your words and comes up in Review tomorrow.</p>'}
+      <label class="field"><span>Swedish</span>
+        <input name="sv" value="${esc(w.sv || prefill)}" placeholder="en kanelbulle" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="next"></label>
+      <div class="bank-hint" hidden></div>
+      <label class="field"><span>English</span>
+        <input name="en" value="${esc(w.en || '')}" placeholder="a cinnamon bun" autocomplete="off" enterkeyhint="next"></label>
+      <label class="field"><span>Example sentence <em>optional</em></span>
+        <input name="ex1" value="${esc(ex[0]?.sv || '')}" placeholder="Vi åt en kanelbulle till kaffet." autocomplete="off" autocapitalize="sentences">
+        <input name="ex1en" value="${esc(ex[0]?.en || '')}" placeholder="Its English translation" autocomplete="off"></label>
+      <label class="field ex2" ${ex[1] ? '' : 'hidden'}><span>Another example</span>
+        <input name="ex2" value="${esc(ex[1]?.sv || '')}" placeholder="En mening till på svenska" autocomplete="off" autocapitalize="sentences">
+        <input name="ex2en" value="${esc(ex[1]?.en || '')}" placeholder="Its English translation" autocomplete="off"></label>
+      ${ex[1] ? '' : '<button type="button" class="link-btn" id="moreEx">+ Another example</button>'}
+      <details class="more" ${w.forms || w.pos ? 'open' : ''}><summary>Word type, forms and level</summary>
+        <div class="more-grid">
+          <label class="field"><span>Word type</span><select name="pos">
+            ${['', 'noun', 'verb', 'adjective', 'adverb', 'expression'].map((p) => `<option value="${p}" ${w.pos === p ? 'selected' : ''}>${p || 'Not set'}</option>`).join('')}
+          </select></label>
+          <label class="field"><span>Level</span><select name="level">${LEVELS.map((l) => `<option ${l === level ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        </div>
+        <label class="field"><span>Forms</span><input name="forms" value="${esc(w.forms || '')}" placeholder="kanelbullen, kanelbullar" autocomplete="off" autocapitalize="off"></label>
+      </details>
+      <p class="small error form-error" hidden></p>
+      <div class="actions">
+        <button type="button" class="btn ghost" data-x="cancel">Cancel</button>
+        <button type="submit" class="btn primary">${edit ? 'Save changes' : 'Add to my words'}</button>
+      </div>
+    </form>`;
+  document.body.appendChild(dlg);
+  const form = dlg.querySelector('form');
+  const close = () => { closeOverlay(dlg); document.removeEventListener('keydown', esc_); };
+  const esc_ = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', esc_);
+  dlg.onclick = (e) => { if (e.target === dlg) close(); };
+  dlg.querySelector('[data-x="cancel"]').onclick = close;
+  const more = dlg.querySelector('#moreEx');
+  if (more) more.onclick = () => { dlg.querySelector('.ex2').hidden = false; more.remove(); form.ex2.focus(); };
+  if (!edit) setTimeout(() => form.sv.focus(), 60);
+
+  // Already in the word bank? Offer the ready-made card with its example sentences.
+  const hint = dlg.querySelector('.bank-hint');
+  const checkBank = () => {
+    const m = !edit && bankMatch(form.sv.value);
+    hint.hidden = !m;
+    if (!m) return;
+    const has = !!state.progress[m.id];
+    hint.innerHTML = has
+      ? `<span><b>${esc(m.sv)}</b> is already in your words (${esc(m.en.split(',')[0])}).</span>`
+      : `<span><b>${esc(m.sv)}</b> is in the word bank: ${esc(m.en.split(',')[0])}, with example sentences.</span><button type="button" class="btn sm primary" id="useBank">Add that one</button>`;
+    const use = hint.querySelector('#useBank');
+    if (use) use.onclick = () => {
+      const snap = snapshot(m.id);
+      addWord(m);
+      persist();
+      close();
+      offerUndo(snap, `“${m.sv}” added — first review tomorrow`);
+      go(tab);
+    };
+  };
+  form.sv.oninput = checkBank;
+  form.oninput = () => { dlg.querySelector('.form-error').hidden = true; };
+  checkBank();
+
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(form));
+    const sv = (f.sv || '').trim(), en = (f.en || '').trim();
+    const err = dlg.querySelector('.form-error');
+    if (!sv || !en) {
+      err.textContent = !sv ? 'Write the Swedish word.' : 'Write what it means in English.';
+      err.hidden = false;
+      (sv ? form.en : form.sv).focus();
+      return;
+    }
+    const examples = [[f.ex1, f.ex1en], [f.ex2, f.ex2en]].filter(([a]) => a && a.trim()).map(([a, b]) => ({ sv: a.trim(), en: (b || '').trim() }));
+    const fields = { sv, en, forms: (f.forms || '').trim(), pos: f.pos || '', level: f.level || level, examples, t: Date.now() };
+    if (edit) {
+      Object.assign(edit, fields);
+      reindex();
+      persist();
+      close();
+      toast(`“${sv}” saved`);
+    } else {
+      const id = 'custom-' + sv.toLowerCase().replace(/\s+/g, '-').slice(0, 40) + '-' + Date.now().toString(36);
+      const nw = { id, ...fields };
+      state.custom.push(nw);
+      reindex();
+      addWord(nw);
+      persist();
+      close();
+      toast(`“${sv}” added to your words ✍️`);
+    }
+    go(tab);
+  };
+}
+
 // ---------- My words tab ----------
 function formatDue(due) {
   const d = daysBetween(todayStr(), due);
@@ -638,10 +768,10 @@ function renderWords() {
       .filter((r) => r.w)
       .filter((r) => !q || norm(r.w.sv + ' ' + r.w.en).includes(norm(q)))
       .sort((a, b) => a.w.sv.localeCompare(b.w.sv, 'sv'));
-    if (!list.length) empty = q ? 'No matches in your words. Try “All words”.' : 'No words yet. Add some in Learn.';
+    if (!list.length) empty = q ? 'No matches in your words. Try “All words”.' : 'No words yet. Add some in Learn, or write your own.';
     rows = list.map(({ w, c }) => `
         <li data-id="${esc(w.id)}">
-          <div class="wl-main"><b>${esc(w.sv)}</b><span class="muted">${esc(w.en)}</span></div>
+          <div class="wl-main"><b>${esc(w.sv)}${isOwn(w) ? ' <span class="own-mark" title="Your word">✍️</span>' : ''}</b><span class="muted">${esc(w.en)}</span></div>
           <div class="wl-meta">
             <div class="steps" aria-label="Step ${c.stage + 1} of ${INTERVALS.length}">${INTERVALS.map((_, i) => `<i class="${i <= c.stage ? 'on' : ''}"></i>`).join('')}</div>
             <span class="small ${isDue(c) ? 'due' : 'muted'}">${c.mastered ? '★ mastered · ' : ''}${formatDue(c.due)}</span>
@@ -704,8 +834,10 @@ function openWord(id, { wotd = false } = {}) {
     <div class="sheet" role="dialog" aria-label="${esc(w.sv)}">
       ${cardHTML(w, { revealed: true, mode: 'review', card: c }).replace('class="card revealed', 'class="card static revealed')}
       ${c ? `<p class="small muted center">Added ${c.added} · reviewed ${c.reviews}× · forgotten ${c.lapses}× · next ${formatDue(c.due)}</p>` : ''}
+      ${isOwn(w) ? '<div class="actions own-actions"><button class="btn ghost" data-x="edit">✏️ Edit</button><button class="btn ghost" data-x="delete">Delete</button></div>' : ''}
       <div class="actions">
-        ${c ? '<button class="btn ghost" data-x="remove">Remove word</button>'
+        ${c && !isOwn(w) ? '<button class="btn ghost" data-x="remove">Remove word</button>'
+          : c ? ''
             : '<button class="btn ghost" data-x="known">✓ I know it</button><button class="btn primary" data-x="add">+ Add to my words</button>'}
         <button class="btn ${c ? 'primary' : 'ghost'}" data-x="close">Close</button>
       </div>
@@ -729,6 +861,16 @@ function openWord(id, { wotd = false } = {}) {
   if (shareBtn) shareBtn.onclick = () => { close(); openComposer({ wordObj: w }); };
   if (addBtn) addBtn.onclick = () => doAdd(false);
   if (knownBtn) knownBtn.onclick = () => doAdd(true);
+  const ed = dlg.querySelector('[data-x="edit"]');
+  if (ed) ed.onclick = () => { close(); openWordEditor({ edit: w }); };
+  const del = dlg.querySelector('[data-x="delete"]');
+  if (del) del.onclick = () => {
+    if (!confirm(`Delete your word “${w.sv}”? It disappears from your words on all your devices.`)) return;
+    Object.assign(w, { deleted: true, t: Date.now() });
+    if (state.progress[id]) { delete state.progress[id]; touch(id); }
+    reindex();
+    persist(); close(); toast(`“${w.sv}” deleted`); go(tab);
+  };
   const rm = dlg.querySelector('[data-x="remove"]');
   if (rm) rm.onclick = () => {
     if (!confirm(`Remove “${w.sv}”? Its progress will be lost.`)) return;
@@ -863,6 +1005,26 @@ function renderStats() {
 }
 
 // ---------- Account (sign in & sync) ----------
+function appleIcon() {
+  return '<svg class="a-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg>';
+}
+
+// "Sign in with Apple" and "Sign in with Google", side by side in weight (Apple asks for that).
+function signInButtons(googleId, lead = 'Sign in') {
+  return `<div class="auth-buttons">
+      <button class="btn wide apple-btn" data-provider="apple">${appleIcon()} ${lead} with Apple</button>
+      <button class="btn ghost wide google-btn" data-provider="google" id="${googleId}">${googleIcon()} ${lead} with Google</button>
+    </div>`;
+}
+function wireSignIn(root, after) {
+  root.querySelectorAll('[data-provider]').forEach((b) => b.onclick = async () => {
+    root.querySelectorAll('[data-provider]').forEach((x) => (x.disabled = true));
+    const ok = await sync.signIn(b.dataset.provider);
+    root.querySelectorAll('[data-provider]').forEach((x) => (x.disabled = false));
+    if (after) after(ok);
+  });
+}
+
 function googleIcon() {
   return '<svg class="g-icon" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.2l7.9 6.2C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.2C.9 16.6 0 20.2 0 24s.9 7.4 2.6 10.8l7.9-6.2z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.2-8.5 2.2-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.2C6.6 42.6 14.6 48 24 48z"/></svg>';
 }
@@ -882,12 +1044,12 @@ function renderAccount(box) {
     box.innerHTML = `
       <h3>Account &amp; sync</h3>
       <p class="small muted">Sign in to back up your progress and use it on all your devices. WordSv still works without an account.</p>
-      <button class="btn ghost wide google-btn" id="signIn">${googleIcon()} Sign in with Google</button>
+      ${signInButtons('signIn')}
       ${st.error ? `<p class="small error">${esc(st.error)}</p>` : ''}
       <details class="privacy"><summary>What is stored?</summary>
-        <p class="small muted">If you sign in, WordSv stores your Google name, email address and your learning progress (your words, review schedule, settings and daily activity) in Google Firebase in the EU. Nothing is shared or sold. You can delete everything at any time under “Delete my account and data”.</p>
+        <p class="small muted">If you sign in, WordSv stores the name and email address you share through Apple or Google and your learning progress (your words, review schedule, settings and daily activity) in Google Firebase in the EU. Nothing is shared or sold. You can delete everything at any time under “Delete my account and data”.</p>
       </details>`;
-    box.querySelector('#signIn').onclick = () => sync.signIn();
+    wireSignIn(box);
     return;
   }
   const u = st.user || {};
@@ -895,7 +1057,7 @@ function renderAccount(box) {
     <h3>Account &amp; sync</h3>
     <div class="who">
       ${u.photo ? `<img src="${esc(u.photo)}" alt="" referrerpolicy="no-referrer">` : `<div class="avatar">${esc((u.name || u.email || '?')[0].toUpperCase())}</div>`}
-      <div><b>${esc(u.name || 'Signed in')}</b><span class="small muted">${esc(u.email)}</span></div>
+      <div><b>${esc(u.name || 'Signed in')}</b><span class="small muted">${esc(u.email)}</span><span class="small muted">Signed in with ${u.provider === 'apple' ? 'Apple' : 'Google'}</span></div>
     </div>
     <p class="small ${st.error ? 'error' : 'muted'}">${st.syncing ? '⟳ Syncing…' : st.error ? esc(st.error) : `☁︎ Progress synced ${agoText(st.lastSync)}`}</p>
     <div class="actions">
@@ -951,24 +1113,6 @@ function renderSettings() {
     </section>
 
     <section class="panel">
-      <h3>Add your own word</h3>
-      <form id="addForm" class="form">
-        <input name="sv" placeholder="Swedish word *" required>
-        <input name="en" placeholder="English translation *" required>
-        <input name="forms" placeholder="Forms (e.g. en bil, bilen, bilar)">
-        <select name="pos"><option value="">Word type</option><option>noun</option><option>verb</option><option>adjective</option><option>adverb</option><option>expression</option></select>
-        <select name="level">${LEVELS.map((l) => `<option ${l === 'B2' ? 'selected' : ''}>${l}</option>`).join('')}</select>
-        <input name="ex1" placeholder="Example sentence (Swedish)">
-        <input name="ex1en" placeholder="Example translation (English)">
-        <input name="ex2" placeholder="2nd example (Swedish)">
-        <input name="ex2en" placeholder="2nd translation (English)">
-        <label class="row small"><input type="checkbox" name="addNow" checked> Add straight to my words</label>
-        <button class="btn primary">Save word</button>
-      </form>
-      ${state.custom.length ? `<p class="small muted">${state.custom.length} custom word(s) saved.</p>` : ''}
-    </section>
-
-    <section class="panel">
       <h3>Backup</h3>
       <p class="small muted">Your progress is saved on this device only. Export a backup now and then: on iPhone, choose “Save to Files”. Import it on another device to continue there.</p>
       <div class="actions">
@@ -1018,21 +1162,6 @@ function renderSettings() {
     if (!confirm(msg)) return;
     if (syncStatus.signedIn) await sync.signOut();
     store.reset(); state = store.load(); reindex(); lastSettings = settingsKey(); store.save(state); updateChrome(); toast('Reset done'); renderSettings();
-  };
-  view.querySelector('#addForm').onsubmit = (e) => {
-    e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target));
-    const sv = f.sv.trim(), en = f.en.trim();
-    if (!sv || !en) return;
-    const id = 'custom-' + sv.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now().toString(36);
-    const examples = [[f.ex1, f.ex1en], [f.ex2, f.ex2en]].filter(([a]) => a && a.trim()).map(([a, b]) => ({ sv: a.trim(), en: (b || '').trim() }));
-    const w = { id, sv, en, forms: f.forms.trim(), pos: f.pos, level: f.level, examples, t: Date.now() };
-    state.custom.push(w);
-    reindex();
-    if (f.addNow) addWord(w);
-    persist();
-    toast(`“${sv}” saved`);
-    renderSettings();
   };
 }
 
@@ -1096,7 +1225,8 @@ async function init() {
   session.reviewedToday = Object.values(state.progress).filter((c) => c.last === today).length;
   initMoments({
     esc, toast, googleIcon, confetti, burst,
-    signIn: () => sync.signIn(),
+    signIn: (p) => sync.signIn(p),
+    signInButtons, wireSignIn,
     status: () => syncStatus,
     uid: () => sync.currentUser()?.uid,
     currentTab: () => tab,

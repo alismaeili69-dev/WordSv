@@ -82,7 +82,12 @@ async function loadSdk() {
 function onAuth(user) {
   status.signedIn = !!user;
   status.restoring = false;
-  status.user = user ? { name: user.displayName || '', email: user.email || '', photo: user.photoURL || '' } : null;
+  status.user = user ? {
+    name: user.displayName || (user.providerData || []).map((p) => p.displayName).find(Boolean) || '',
+    email: user.email || (user.providerData || []).map((p) => p.email).find(Boolean) || '',
+    photo: user.photoURL || '',
+    provider: providerOf(user),
+  } : null;
   setFlag(!!user);
   emit();
   if (user) syncNow();
@@ -104,7 +109,7 @@ export async function initSync(h) {
   window.addEventListener('online', async () => { if (status.signedIn) { await resetNetwork(); syncNow(); } });
 }
 
-function friendlyAuthError(e) {
+function friendlyAuthError(e, provider = 'google') {
   const code = (e && e.code) || '';
   if (code.includes('popup-closed') || code.includes('cancelled-popup')) return null; // user closed it
   if (code.includes('popup-blocked')) return 'The sign-in window was blocked. Allow pop-ups for this site and try again.';
@@ -112,20 +117,41 @@ function friendlyAuthError(e) {
   if (code.includes('operation-not-supported') || code.includes('web-storage-unsupported'))
     return 'Sign-in is not supported here. Open WordSv in Safari and sign in there, then reopen the app.';
   if (code.includes('network')) return 'No internet connection.';
+  const notSetUp = code.includes('operation-not-allowed') || code.includes('invalid-oauth') || (provider === 'apple' && code.includes('invalid-credential'));
+  if (notSetUp)
+    return provider === 'apple' ? 'Sign in with Apple is not switched on for WordSv yet. Use Google for now.' : 'This sign-in method is not switched on yet.';
+  if (code.includes('account-exists-with-different-credential'))
+    return `This email address already has a WordSv account through ${provider === 'apple' ? 'Google' : 'Apple'}. Sign in with that instead.`;
   return 'Sign-in failed' + (code ? ` (${code})` : '') + '.';
 }
 
-export async function signIn() {
+function providerOf(user) {
+  const ids = (user.providerData || []).map((p) => p.providerId);
+  return ids.includes('apple.com') ? 'apple' : 'google';
+}
+function makeProvider(A, name) {
+  if (name === 'apple') {
+    const p = new A.OAuthProvider('apple.com');
+    p.addScope('email');
+    p.addScope('name');
+    p.setCustomParameters({ locale: 'en' });
+    return p;
+  }
+  const p = new A.GoogleAuthProvider();
+  p.setCustomParameters({ prompt: 'select_account' });
+  return p;
+}
+
+// provider: 'google' or 'apple'
+export async function signIn(provider = 'google') {
   status.error = null;
   emit();
   try {
     const { auth, A } = await loadSdk();
-    const provider = new A.GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account' });
-    await A.signInWithPopup(auth, provider);
+    await A.signInWithPopup(auth, makeProvider(A, provider));
     return true;
   } catch (e) {
-    status.error = friendlyAuthError(e);
+    status.error = friendlyAuthError(e, provider);
     emit();
     return false;
   }
@@ -194,7 +220,7 @@ export async function deleteAccount() {
       await A.deleteUser(auth.currentUser);
     } catch (e) {
       if (!String(e.code).includes('requires-recent-login')) throw e;
-      await A.reauthenticateWithPopup(auth.currentUser, new A.GoogleAuthProvider());
+      await A.reauthenticateWithPopup(auth.currentUser, makeProvider(A, providerOf(auth.currentUser)));
       await A.deleteUser(auth.currentUser);
     }
     setFlag(false);

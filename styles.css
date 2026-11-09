@@ -635,3 +635,74 @@ body.no-scroll { overflow: hidden; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 .icon-btn.spinning { animation: spin .9s linear infinite; pointer-events: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- your own words ---------- */
+.own-cta {
+  display: flex; align-items: center; gap: 12px; width: 100%; border: 0; text-align: left; cursor: pointer;
+  padding: 11px 12px 11px 12px; margin-bottom: 10px; border-radius: 18px; color: var(--text);
+  background: var(--surface); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--blue) 35%, var(--line)), var(--shadow-sm);
+  transition: transform .4s var(--spring), box-shadow .25s;
+}
+.own-cta:active { transform: scale(.97); transition-duration: .1s; }
+.own-icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-size: 21px; background: var(--tint); flex-shrink: 0; }
+.own-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.own-text b { font-family: var(--display); font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+.own-text small { font-size: 13px; color: var(--muted); }
+.own-plus {
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0;
+  background: var(--blue); color: #fff; font-size: 22px; font-weight: 500; line-height: 1;
+  box-shadow: 0 6px 14px -6px rgba(0,106,167,.8); transition: transform .4s var(--spring);
+}
+@media (hover: hover) { .own-cta:hover .own-plus { transform: rotate(90deg); } }
+.pill.own { background: color-mix(in oklab, var(--surface), var(--sun) 35%); color: #0E2A3F; }
+.own-mark { font-size: 13px; }
+.own-actions { margin: -2px 0 10px; }
+
+/* editor sheet */
+.sheet.editor { padding: 28px 20px calc(env(safe-area-inset-bottom) + 18px); display: grid; gap: 12px; }
+.sheet.editor h2 { margin: 0; font-size: 24px; }
+.sheet.editor > p { margin: -6px 0 2px; }
+.sheet.editor .actions { padding: 0; margin-top: 4px; }
+.field { display: grid; gap: 6px; font-size: 13px; font-weight: 650; color: var(--muted); }
+.field em { font-style: normal; font-weight: 500; opacity: .8; }
+.field input, .field select {
+  font-size: 16px; font-weight: 400; color: var(--text); padding: 12px 14px; border-radius: 12px; border: 0;
+  box-shadow: inset 0 0 0 1px var(--line); background: var(--bg); transition: box-shadow .2s; width: 100%;
+}
+.field input[name="sv"] { font-family: var(--display); font-size: 21px; font-weight: 650; }
+.field input:focus, .field select:focus { box-shadow: inset 0 0 0 1.5px var(--blue), 0 0 0 4px var(--tint); outline: none; }
+.sheet.editor .link-btn { justify-self: start; margin-top: -4px; }
+.more summary { cursor: pointer; font-size: 14px; font-weight: 650; color: var(--accent-ink); padding: 4px 0; }
+.more[open] { display: grid; gap: 10px; }
+.more-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
+.bank-hint {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; margin-top: -4px;
+  background: color-mix(in oklab, var(--surface), var(--sun) 18%); font-size: 14px; line-height: 1.35; animation: rise .3s var(--ease-out) both;
+}
+.bank-hint span { flex: 1; }
+.form-error { margin: 0; }
+
+/* sign-in buttons */
+.auth-buttons { display: grid; gap: 10px; margin: 6px 0 4px; }
+.apple-btn, .google-btn { gap: 10px; }
+.apple-btn { background: #000; color: #fff; box-shadow: 0 6px 16px -8px rgba(0,0,0,.6); }
+.apple-btn:hover { background: #1c1c1e !important; }
+.a-icon { width: 18px; height: 18px; margin-top: -3px; }
+@media (prefers-color-scheme: dark) {
+  .apple-btn { background: #fff; color: #000; }
+  .apple-btn:hover { background: #f2f2f2 !important; }
+}
+.moments-hero .auth-buttons { max-width: 340px; margin: 0 auto; }
+
+/* in Learn the card is already open, so let its content set the height and keep the buttons in view */
+.card.learn { min-height: 0; padding-bottom: 20px; }
+.card.learn .word-row { margin-top: 18px; }
+.card.learn .answer { margin-top: 16px; padding-top: 14px; }
+.own-cta { padding: 8px 10px; margin-bottom: 8px; }
+.own-icon { width: 36px; height: 36px; font-size: 19px; }
+.own-text b { font-size: 16px; }
+.own-text small { font-size: 12.5px; }
+.own-plus { width: 32px; height: 32px; }
+.own-cta + .wotd-mini { padding: 9px 14px; margin-bottom: 8px; }
+.stack:has(.card.learn) { margin: 4px 0 22px; }
+.card.learn .word-row { margin-top: 14px; }

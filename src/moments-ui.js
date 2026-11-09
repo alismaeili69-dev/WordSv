@@ -119,9 +119,10 @@ export async function renderMoments(view) {
         </div>
         <h2>Shared moments</h2>
         <p class="muted">Share the words you learn as styled stories that your friends see for 24 hours. React, compete on the weekly leaderboard and add your friends' words with one tap.</p>
-        <button class="btn primary wide google-btn" id="momentsSignIn">${ctx.googleIcon()} Sign in with Google to start</button>
+        <p class="small muted">Sign in to start.</p>
+        ${ctx.signInButtons('momentsSignIn')}
       </section>`;
-    view.querySelector('#momentsSignIn').onclick = () => ctx.signIn();
+    ctx.wireSignIn(view, (ok) => { if (!ok && ctx.status().error) ctx.toast(ctx.status().error); });
     return;
   }
   const me = ctx.uid();

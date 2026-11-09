@@ -20,11 +20,11 @@ A WordUp-style app for learning Swedish vocabulary at every level (A1–C1) with
 - **Keyboard** (web on a computer): ← / → to swipe, space to reveal, K = I know it, U = undo.
 - **Settings**: turn levels on/off for Learn, daily review limit, auto-read aloud, add your own words, export/import a backup.
 
-Progress is stored in your browser on that device (`localStorage`). Optionally, **sign in with Google** (Settings → Account & sync, or on the welcome screen) to back up your progress and sync it between devices. See [PRIVACY.md](PRIVACY.md).
+Progress is stored in your browser on that device (`localStorage`). Optionally, **sign in with Apple or Google** (Settings → Account & sync, or on the welcome screen) to back up your progress and sync it between devices. See [PRIVACY.md](PRIVACY.md).
 
 ## Sign-in & sync (Firebase)
 
-- Google sign-in uses Firebase Authentication; progress is stored in Cloud Firestore, one document per user at `users/{uid}`.
+- Apple and Google sign-in use Firebase Authentication (Apple needs a Services ID and key from an Apple Developer account, set up under Firebase → Authentication → Sign-in method → Apple); progress is stored in Cloud Firestore, one document per user at `users/{uid}`.
 - `src/firebase-config.js` holds the public web config. `firestore.rules` holds the security rules (paste them into Firebase console → Firestore Database → Rules → Publish).
 - Sync merges instead of overwriting: every word has a change time, removals leave a tombstone, and the newest change wins per word (`src/merge.js`, tested in `tests/merge.test.js`). Syncs run a few seconds after changes, when the app opens or comes back to the foreground, and on “Sync now”.
 - Social data lives in `usernames/{name}`, `profiles/{uid}`, `friendships/{uidA_uidB}` and `moments/{id}`; `firestore.rules` enforces unique usernames, that only friends at posting time can read a moment, and that friends can only add their own reaction.
@@ -98,7 +98,7 @@ src/srs.js            spaced-repetition logic
 src/storage.js        save / export (share sheet) / import
 src/stats.js          streaks, forecast, accuracy (pure functions)
 src/merge.js          merging progress between devices (pure functions)
-src/sync.js           Google sign-in and Firestore sync
+src/sync.js           Apple/Google sign-in and Firestore sync
 src/social.js         usernames, friends, moments, leaderboard (Firestore)
 src/moments-ui.js     Moments tab: story rings, composer, viewer, friends
 src/badges.js         badges and word of the day (pure functions)
