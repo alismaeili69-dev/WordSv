@@ -104,3 +104,12 @@ test('a fresh device never overwrites settings from a set-up device', () => {
   const changed = S({ settings: { levels: ['A1'], t: 5 } });
   assert.deepEqual(mergeStates(changed, used).settings.levels, ['A1']);
 });
+
+test('learned flag and skip positions survive encode/decode and merge', () => {
+  const local = { progress: { a: { stage: 11, due: '9999-12-31', added: '2026-11-12', reviews: 0, lapses: 0, known: true, learned: true, t: 5 } }, skipped: ['x', 'y'], skipPos: { x: 4 } };
+  const back = decode(encode(local));
+  assert.equal(back.progress.a.learned, true);
+  assert.deepEqual(back.skipPos, { x: 4 });
+  const merged = mergeStates({ ...local, skipPos: { x: 7 } }, { progress: {}, skipped: ['y', 'z'], skipPos: { y: 12, z: 3, x: 1 } });
+  assert.deepEqual(merged.skipPos, { x: 7, y: 12, z: 3 });
+});

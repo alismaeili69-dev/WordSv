@@ -1,4 +1,4 @@
-import { INTERVALS, todayStr, newCard, knownCard, review, isDue, daysBetween } from './srs.js';
+import { INTERVALS, todayStr, newCard, learnedCard, isLearned, review, isDue, daysBetween } from './srs.js';
 import * as store from './storage.js';
 import { makeSwipeable } from './swipe.js';
 import { streakDays, bestStreak, lastDays, forecast, accuracy } from './stats.js';
@@ -177,8 +177,8 @@ function touch(id) {
 
 // ---------- cloud sync glue ----------
 function syncedState() {
-  const { progress, custom, settings, skipped, log, deleted, badges } = state;
-  return { progress, custom, settings, skipped, log, deleted, badges };
+  const { progress, custom, settings, skipped, skipPos, log, deleted, badges } = state;
+  return { progress, custom, settings, skipped, skipPos, log, deleted, badges };
 }
 
 function applySynced(remoteMerged) {
@@ -247,8 +247,33 @@ function learnList() {
     .map((w, i) => [w, i])
     .sort((a, b) => levelRank(a[0].level) - levelRank(b[0].level) || a[1] - b[1]) // easiest enabled level first
     .map(([w]) => w);
+  // Skipped words are shuffled back in: each one waits a random number of new words, counting down
+  // every time you add, know or skip a word, and then comes up again.
   const skipped = new Set(state.skipped);
-  return [...fresh.filter((w) => !skipped.has(w.id)), ...fresh.filter((w) => skipped.has(w.id))];
+  const out = fresh.filter((w) => !skipped.has(w.id));
+  fresh.filter((w) => skipped.has(w.id))
+    .map((w) => [w, skipPosOf(w.id)])
+    .sort((a, b) => a[1] - b[1])
+    .forEach(([w, pos]) => out.splice(Math.min(pos, out.length), 0, w));
+  return out;
+}
+
+const SKIP_MIN = 3, SKIP_MAX = 20;
+function skipPosOf(id) {
+  const p = state.skipPos[id];
+  if (Number.isFinite(p)) return p;
+  let h = 0; // words skipped before this existed: a stable pseudo-random spot
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return SKIP_MIN + (h % (SKIP_MAX - SKIP_MIN + 1));
+}
+// one new word has been dealt with: every skipped word comes one step closer
+function advanceSkips() {
+  for (const id of state.skipped) state.skipPos[id] = Math.max(0, skipPosOf(id) - 1);
+}
+function skipWord(id) {
+  advanceSkips();
+  if (!state.skipped.includes(id)) state.skipped.push(id);
+  state.skipPos[id] = SKIP_MIN + Math.floor(Math.random() * (SKIP_MAX - SKIP_MIN + 1));
 }
 
 function updateChrome() {
@@ -303,6 +328,7 @@ function snapshot(id) {
     id,
     card: state.progress[id] ? { ...state.progress[id] } : null,
     skipped: [...state.skipped],
+    skipPos: { ...state.skipPos },
     log: state.log[d] ? { ...state.log[d] } : null,
     date: d,
     reviewedToday: session.reviewedToday,
@@ -332,6 +358,7 @@ function undo(snap = session.undo) {
   if (snap.card) state.progress[snap.id] = snap.card; else delete state.progress[snap.id];
   touch(snap.id);
   state.skipped = snap.skipped;
+  state.skipPos = snap.skipPos || {};
   if (snap.log) state.log[snap.date] = snap.log; else delete state.log[snap.date];
   session.reviewedToday = snap.reviewedToday;
   session.learnIndex = snap.learnIndex;
@@ -345,7 +372,8 @@ function undo(snap = session.undo) {
 function cardHTML(w, { revealed, mode, card, reverse = false }) {
   const leftLabel = mode === 'learn' ? 'Skip' : 'Again';
   const rightLabel = mode === 'learn' ? 'Add' : 'Knew it';
-  const stageInfo = card ? `<span class="pill">Step ${card.stage + 1}/${INTERVALS.length}</span>` : '';
+  const stageInfo = !card ? '' : isLearned(card) ? '<span class="pill learned">✓ Learned</span>'
+    : `<span class="pill">Step ${card.stage + 1}/${INTERVALS.length}</span>`;
   const examples = (w.examples || []).map((ex) => `
       <li>
         <div class="ex-sv">${esc(ex.sv)} <button class="speak mini" data-say="${esc(ex.sv)}" aria-label="Listen">${SPEAKER_SVG}</button></div>
@@ -520,11 +548,14 @@ function renderLevelPicker() {
   draw();
 }
 
+// known = true: "I know it", straight to Learned words and never reviewed
 function addWord(w, known = false) {
-  state.progress[w.id] = known ? knownCard() : newCard();
+  state.progress[w.id] = known ? learnedCard() : newCard();
   touch(w.id);
   state.skipped = state.skipped.filter((s) => s !== w.id);
-  logEvent('added');
+  delete state.skipPos[w.id];
+  advanceSkips();
+  if (!known) logEvent('added');
 }
 
 function renderLearn() {
@@ -563,10 +594,10 @@ function renderLearn() {
     <div class="stack">${cardHTML(w, { revealed: true, mode: 'learn' })}</div>
     <div class="actions three">
       <button class="btn ghost" data-act="left">Skip</button>
-      <button class="btn ghost" data-act="known" title="Already know it: first review in 2 weeks">✓ I know it</button>
+      <button class="btn ghost" data-act="known" title="Already know it: save it to Learned words, no reviews">✓ I know it</button>
       <button class="btn primary" data-act="right">+ Add</button>
     </div>
-    <p class="legend">Swipe right to add, left to skip. “I know it” brings the word back in two weeks.</p>`;
+    <p class="legend">Swipe right to add, left to skip for now; skipped words come back a little later. “I know it” saves the word to Learned words, with no reviews.</p>`;
   if (state.settings.autoSpeak) speak(w.sv);
   wireLevelChips();
   view.querySelector('#addOwn').onclick = () => openWordEditor();
@@ -582,9 +613,9 @@ function renderLearn() {
     },
     onLeft: () => {
       const snap = snapshot(w.id);
-      if (!state.skipped.includes(w.id)) state.skipped.push(w.id);
+      skipWord(w.id);
       persist();
-      offerUndo(snap, `Skipped “${w.sv}”`);
+      offerUndo(snap, `Skipped “${w.sv}” for now`);
       renderLearn();
     },
   });
@@ -593,7 +624,7 @@ function renderLearn() {
     addWord(w, true);
     persist();
     el.style.transition = 'opacity .2s'; el.style.opacity = '0';
-    offerUndo(snap, `“${w.sv}” marked as known — review in 2 weeks`);
+    offerUndo(snap, `“${w.sv}” saved to Learned words`);
     setTimeout(renderLearn, 180);
   };
 }
@@ -734,6 +765,12 @@ function openWordEditor({ edit = null, prefill = '' } = {}) {
 }
 
 // ---------- My words tab ----------
+function fmtDate(d) {
+  if (!d) return '';
+  const [y, m, day] = d.split('-').map(Number);
+  return new Date(y, m - 1, day).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: y === new Date().getFullYear() ? undefined : 'numeric' });
+}
+
 function formatDue(due) {
   const d = daysBetween(todayStr(), due);
   if (d <= 0) return 'today';
@@ -762,14 +799,20 @@ function renderWords() {
   let rows = '';
   let empty = '';
 
-  if (mode === 'mine') {
+  if (mode === 'mine' || mode === 'learned') {
     const list = Object.entries(state.progress)
       .map(([id, c]) => ({ w: wordById(id), c }))
-      .filter((r) => r.w)
+      .filter((r) => r.w && isLearned(r.c) === (mode === 'learned'))
       .filter((r) => !q || norm(r.w.sv + ' ' + r.w.en).includes(norm(q)))
       .sort((a, b) => a.w.sv.localeCompare(b.w.sv, 'sv'));
-    if (!list.length) empty = q ? 'No matches in your words. Try “All words”.' : 'No words yet. Add some in Learn, or write your own.';
-    rows = list.map(({ w, c }) => `
+    if (!list.length) empty = q ? 'No matches here. Try “All words”.'
+      : mode === 'learned' ? 'Words you mark “I know it” in Learn are saved here. They are not reviewed.'
+        : 'No words yet. Add some in Learn, or write your own.';
+    rows = list.map(({ w, c }) => mode === 'learned' ? `
+        <li data-id="${esc(w.id)}">
+          <div class="wl-main"><b>${esc(w.sv)}${isOwn(w) ? ' <span class="own-mark" title="Your word">✍️</span>' : ''}</b><span class="muted">${esc(w.en)}</span></div>
+          <div class="wl-meta"><span class="small learned-mark">✓ Learned</span><span class="small muted">${esc(fmtDate(c.added))}</span></div>
+        </li>` : `
         <li data-id="${esc(w.id)}">
           <div class="wl-main"><b>${esc(w.sv)}${isOwn(w) ? ' <span class="own-mark" title="Your word">✍️</span>' : ''}</b><span class="muted">${esc(w.en)}</span></div>
           <div class="wl-meta">
@@ -788,19 +831,22 @@ function renderWords() {
           <div class="wl-main"><b>${esc(w.sv)}</b><span class="muted">${esc(w.en)}</span></div>
           <div class="wl-meta">
             <span class="pill level small-pill">${esc(w.level || '')}</span>
-            ${has ? '<span class="small muted">✓ in my words</span>' : `<button class="mini-add" data-add="${esc(w.id)}">+ Add</button>`}
+            ${has ? `<span class="small muted">${isLearned(state.progress[w.id]) ? '✓ learned' : '✓ in my words'}</span>` : `<button class="mini-add" data-add="${esc(w.id)}">+ Add</button>`}
           </div>
         </li>`;
     }).join('');
   }
 
-  const total = Object.keys(state.progress).length;
+  const cards = Object.values(state.progress);
+  const nLearned = cards.filter(isLearned).length;
+  const seg = (m, label) => `<button role="tab" data-mode="${m}" aria-selected="${mode === m}" class="${mode === m ? 'on' : ''}">${label}</button>`;
   view.innerHTML = `
     <div class="segmented" role="tablist">
-      <button role="tab" data-mode="mine" aria-selected="${mode === 'mine'}" class="${mode === 'mine' ? 'on' : ''}">My words (${total})</button>
-      <button role="tab" data-mode="all" aria-selected="${mode === 'all'}" class="${mode === 'all' ? 'on' : ''}">All words</button>
+      ${seg('mine', `Learning (${cards.length - nLearned})`)}
+      ${seg('learned', `Learned (${nLearned})`)}
+      ${seg('all', 'All words')}
     </div>
-    <input class="search" type="search" placeholder="${mode === 'mine' ? 'Search your words…' : 'Search Swedish or English…'}" value="${esc(q)}" autocomplete="off" autocapitalize="off">
+    <input class="search" type="search" placeholder="${mode === 'all' ? 'Search Swedish or English…' : 'Search your words…'}" value="${esc(q)}" autocomplete="off" autocapitalize="off">
     ${empty ? `<p class="muted center">${empty}</p>` : ''}
     <ul class="wordlist">${rows}</ul>`;
 
@@ -833,8 +879,11 @@ function openWord(id, { wotd = false } = {}) {
   dlg.innerHTML = `
     <div class="sheet" role="dialog" aria-label="${esc(w.sv)}">
       ${cardHTML(w, { revealed: true, mode: 'review', card: c }).replace('class="card revealed', 'class="card static revealed')}
-      ${c ? `<p class="small muted center">Added ${c.added} · reviewed ${c.reviews}× · forgotten ${c.lapses}× · next ${formatDue(c.due)}</p>` : ''}
+      ${c ? (isLearned(c)
+        ? `<p class="small muted center">In your learned words since ${esc(fmtDate(c.added))}. It is not reviewed.</p>`
+        : `<p class="small muted center">Added ${esc(fmtDate(c.added))}, reviewed ${c.reviews}×, forgotten ${c.lapses}×. Next review ${formatDue(c.due)}.</p>`) : ''}
       ${isOwn(w) ? '<div class="actions own-actions"><button class="btn ghost" data-x="edit">✏️ Edit</button><button class="btn ghost" data-x="delete">Delete</button></div>' : ''}
+      ${c && isLearned(c) ? '<div class="actions own-actions"><button class="btn ghost wide" data-x="relearn">↺ Practise it again</button></div>' : ''}
       <div class="actions">
         ${c && !isOwn(w) ? '<button class="btn ghost" data-x="remove">Remove word</button>'
           : c ? ''
@@ -855,7 +904,13 @@ function openWord(id, { wotd = false } = {}) {
   const doAdd = (known) => {
     addWord(w, known);
     if (wotd || (todaysWordOfDay() || {}).id === w.id) bump('wotdAdded');
-    persist(); close(); toast(known ? `“${w.sv}” — review in 2 weeks` : `“${w.sv}” added`); go(tab);
+    persist(); close(); toast(known ? `“${w.sv}” saved to Learned words` : `“${w.sv}” added`); go(tab);
+  };
+  const relearn = dlg.querySelector('[data-x="relearn"]');
+  if (relearn) relearn.onclick = () => {
+    state.progress[id] = newCard();
+    touch(id);
+    persist(); close(); toast(`“${w.sv}” is back in your reviews, starting tomorrow`); go(tab);
   };
   const shareBtn = dlg.querySelector('[data-x="share"]');
   if (shareBtn) shareBtn.onclick = () => { close(); openComposer({ wordObj: w }); };
@@ -941,6 +996,8 @@ function renderStats() {
   const acc = accuracy(days14);
   const totalReviews = Object.values(state.log).reduce((s, e) => s + (e.reviews || 0), 0);
   const mastered = cards.filter((c) => c.mastered).length;
+  const learned = cards.filter(isLearned).length;
+  const studying = cards.filter((c) => !isLearned(c));
   const fc = forecast(cards, 7);
 
   const counts = {}, added = {};
@@ -951,15 +1008,16 @@ function renderStats() {
 
   // stage groups: learning (steps 1–4), getting there (5–8), strong (9–12)
   const groups = [
-    { name: 'New (steps 1–4)', n: cards.filter((c) => c.stage <= 3).length },
-    { name: 'Growing (steps 5–8)', n: cards.filter((c) => c.stage >= 4 && c.stage <= 7).length },
-    { name: 'Strong (steps 9–12)', n: cards.filter((c) => c.stage >= 8).length },
+    { name: 'New (steps 1–4)', n: studying.filter((c) => c.stage <= 3).length },
+    { name: 'Growing (steps 5–8)', n: studying.filter((c) => c.stage >= 4 && c.stage <= 7).length },
+    { name: 'Strong (steps 9–12)', n: studying.filter((c) => c.stage >= 8).length },
+    { name: 'Learned, not reviewed', n: learned },
   ];
 
   view.innerHTML = `
     <div class="tiles">
       <div class="tile"><span class="tile-label">Streak</span><b>${streak ? '🔥 ' : ''}${streak}</b><span class="tile-sub">day${streak === 1 ? '' : 's'} · best ${best}</span></div>
-      <div class="tile"><span class="tile-label">My words</span><b>${cards.length}</b><span class="tile-sub">${mastered} mastered</span></div>
+      <div class="tile"><span class="tile-label">My words</span><b>${cards.length}</b><span class="tile-sub">${learned} learned, ${mastered} mastered</span></div>
       <div class="tile"><span class="tile-label">Due today</span><b>${fc[0].count}</b><span class="tile-sub">${totalReviews} reviews total</span></div>
       <div class="tile"><span class="tile-label">Remembered</span><b>${acc === null ? '–' : acc + '%'}</b><span class="tile-sub">last 14 days</span></div>
     </div>

@@ -9,6 +9,7 @@ const DEFAULT = {
   // levels: which CEFR levels appear in Learn (null = not chosen yet -> show the level picker)
   settings: { dailyLimit: 50, level: 'all', autoSpeak: false, levels: null, direction: 'sv-en' },
   skipped: [],           // wordIds skipped in Learn (shown again later)
+  skipPos: {},           // wordId -> how many new words later it comes back
   log: {},               // 'YYYY-MM-DD' -> { reviews, correct, added } for stats and streaks
   deleted: {},           // wordId -> time removed (so removals sync to other devices)
   badges: {},            // badgeId -> date unlocked
@@ -71,6 +72,7 @@ export async function importFile(file) {
     custom: Array.isArray(data.custom) ? data.custom : [],
     settings: { ...DEFAULT.settings, ...(data.settings || {}) },
     skipped: Array.isArray(data.skipped) ? data.skipped : [],
+    skipPos: data.skipPos && typeof data.skipPos === 'object' ? data.skipPos : {},
     log: data.log && typeof data.log === 'object' ? data.log : {},
     deleted: data.deleted && typeof data.deleted === 'object' ? data.deleted : {},
     badges: data.badges && typeof data.badges === 'object' ? data.badges : {},

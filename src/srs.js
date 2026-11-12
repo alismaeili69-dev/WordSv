@@ -53,7 +53,14 @@ export function isDue(card, today = todayStr()) {
   return card.due <= today;
 }
 
-// "I already know this" in Learn: skip the first steps and see the word again in 2 weeks
+// "I know it" in Learn: the word goes straight to your learned words and is never scheduled.
+export const NEVER = '9999-12-31';
+export function learnedCard(today = todayStr()) {
+  return { stage: LAST_STAGE, due: NEVER, added: today, last: null, reviews: 0, lapses: 0, mastered: false, known: true, learned: true };
+}
+export const isLearned = (card) => !!(card && card.learned);
+
+// Older behaviour, kept for cards made before: skip the first steps, see the word again in 2 weeks
 export const KNOWN_STAGE = 5;
 export function knownCard(today = todayStr()) {
   return { stage: KNOWN_STAGE, due: addDays(today, INTERVALS[KNOWN_STAGE]), added: today, last: null, reviews: 0, lapses: 0, mastered: false, known: true };

@@ -52,6 +52,10 @@ export function mergeStates(local, remote) {
   }
 
   const skipped = [...new Set([...(remote.skipped || []), ...(local.skipped || [])])].filter((id) => !progress[id]);
+  // where each skipped word comes back in Learn; this device's choice wins
+  const skipPos = {};
+  const pos = { ...(remote.skipPos || {}), ...(local.skipPos || {}) };
+  for (const id of skipped) if (pos[id] != null) skipPos[id] = pos[id];
 
   // badges: union, keep the earliest unlock date
   const badges = { ...(remote.badges || {}) };
@@ -62,16 +66,16 @@ export function mergeStates(local, remote) {
   for (const [k, v] of Object.entries(local.settings?.counters || {})) counters[k] = Math.max(v || 0, counters[k] || 0);
   if (Object.keys(counters).length) settings.counters = counters;
 
-  return { progress, deleted, custom: [...custom.values()], settings, log, skipped, badges };
+  return { progress, deleted, custom: [...custom.values()], settings, log, skipped, skipPos, badges };
 }
 
 // Compact form for the server: Firestore documents are limited to 1 MiB, and all
 // 6,930 words as plain objects would be close to that.
-// card -> [stage, due, added, last, reviews, lapses, flags, t]; flags: 1 = mastered, 2 = known
+// card -> [stage, due, added, last, reviews, lapses, flags, t]; flags: 1 = mastered, 2 = known, 4 = learned
 export function encode(state) {
   const p = {};
   for (const [id, c] of Object.entries(state.progress || {})) {
-    p[id] = [c.stage, c.due, c.added, c.last || '', c.reviews || 0, c.lapses || 0, (c.mastered ? 1 : 0) | (c.known ? 2 : 0), c.t || 0];
+    p[id] = [c.stage, c.due, c.added, c.last || '', c.reviews || 0, c.lapses || 0, (c.mastered ? 1 : 0) | (c.known ? 2 : 0) | (c.learned ? 4 : 0), c.t || 0];
   }
   return {
     v: 1,
@@ -81,6 +85,7 @@ export function encode(state) {
     settings: state.settings || {},
     log: state.log || {},
     skipped: state.skipped || [],
+    skipPos: state.skipPos || {},
     badges: state.badges || {},
   };
 }
@@ -91,6 +96,7 @@ export function decode(doc) {
   for (const [id, a] of Object.entries(doc.p || {})) {
     const c = { stage: a[0], due: a[1], added: a[2], last: a[3] || null, reviews: a[4], lapses: a[5], mastered: !!(a[6] & 1), t: a[7] };
     if (a[6] & 2) c.known = true;
+    if (a[6] & 4) c.learned = true;
     progress[id] = c;
   }
   return {
@@ -100,6 +106,7 @@ export function decode(doc) {
     settings: doc.settings || {},
     log: doc.log || {},
     skipped: doc.skipped || [],
+    skipPos: doc.skipPos || {},
     badges: doc.badges || {},
   };
 }

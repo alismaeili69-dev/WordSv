@@ -706,3 +706,6 @@ body.no-scroll { overflow: hidden; }
 .own-cta + .wotd-mini { padding: 9px 14px; margin-bottom: 8px; }
 .stack:has(.card.learn) { margin: 4px 0 22px; }
 .card.learn .word-row { margin-top: 14px; }
+.learned-mark { color: var(--good); font-weight: 650; }
+.segmented button { white-space: nowrap; }
+.pill.learned { background: color-mix(in oklab, var(--surface), var(--good) 18%); color: var(--good); }

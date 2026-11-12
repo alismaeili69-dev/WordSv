@@ -60,3 +60,12 @@ test('"I know it" starts at step 6 with a 14-day gap', () => {
   assert.equal(isDue(k, T), false);
   assert.equal(isDue(k, addDays(T, 14)), true);
 });
+
+import { learnedCard, isLearned, NEVER } from '../src/srs.js';
+test('"I know it" makes a learned card that is never due', () => {
+  const c = learnedCard(T);
+  assert.equal(isLearned(c), true);
+  assert.equal(c.due, NEVER);
+  assert.equal(isDue(c, '2099-01-01'), false);
+  assert.equal(isLearned(newCard(T)), false);
+});
