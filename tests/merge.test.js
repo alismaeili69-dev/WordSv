@@ -113,3 +113,18 @@ test('learned flag and skip positions survive encode/decode and merge', () => {
   const merged = mergeStates({ ...local, skipPos: { x: 7 } }, { progress: {}, skipped: ['y', 'z'], skipPos: { y: 12, z: 3, x: 1 } });
   assert.deepEqual(merged.skipPos, { x: 7, y: 12, z: 3 });
 });
+
+import { readFileSync } from 'node:fs';
+import { SERVER_KEYS } from '../src/merge.js';
+test('the synced document only uses fields the security rules allow', () => {
+  const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
+  const m = rules.match(/match \/users\/\{uid\}[\s\S]*?keys\(\)\.hasOnly\(\[([^\]]*)\]\)/);
+  const allowed = m[1].split(',').map((k) => k.trim().replace(/'/g, ''));
+  assert.deepEqual([...SERVER_KEYS].sort(), [...allowed].sort());
+  const full = { progress: { a: card(2, 1, { learned: true }) }, custom: [{ id: 'custom-x', sv: 'x', en: 'y' }], skipped: ['b'], skipPos: { b: 5 },
+    settings: { levels: ['B1'], t: 1 }, log: { '2026-11-01': { reviews: 1 } }, deleted: { c: 1 }, badges: { first: '2026-11-01' }, somethingNew: 1 };
+  const doc = { ...encode(full), email: 'a@b.c', updatedAt: 0 };
+  for (const k of Object.keys(doc)) assert.ok(allowed.includes(k), `"${k}" would be rejected by firestore.rules`);
+  assert.deepEqual(decode(doc).skipPos, { b: 5 });
+  assert.equal(decode(doc).settings.skipPos, undefined);
+});

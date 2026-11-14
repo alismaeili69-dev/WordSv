@@ -82,13 +82,17 @@ export function encode(state) {
     p,
     deleted: state.deleted || {},
     custom: state.custom || [],
-    settings: state.settings || {},
+    // skip positions travel inside settings, because the rules don't allow a new top-level field
+    settings: { ...(state.settings || {}), skipPos: state.skipPos || {} },
     log: state.log || {},
     skipped: state.skipped || [],
-    skipPos: state.skipPos || {},
     badges: state.badges || {},
   };
 }
+
+// The server's security rules only accept these top-level fields (see firestore.rules).
+// New data must go inside one of them, or every sync is rejected.
+export const SERVER_KEYS = ['v', 'p', 'deleted', 'custom', 'settings', 'log', 'skipped', 'badges', 'email', 'updatedAt'];
 
 export function decode(doc) {
   if (!doc || doc.v !== 1) return null;
@@ -99,14 +103,15 @@ export function decode(doc) {
     if (a[6] & 4) c.learned = true;
     progress[id] = c;
   }
+  const { skipPos, ...settings } = doc.settings || {};
   return {
     progress,
     deleted: doc.deleted || {},
     custom: doc.custom || [],
-    settings: doc.settings || {},
+    settings,
     log: doc.log || {},
     skipped: doc.skipped || [],
-    skipPos: doc.skipPos || {},
+    skipPos: skipPos || doc.skipPos || {},
     badges: doc.badges || {},
   };
 }
