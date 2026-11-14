@@ -1,4 +1,4 @@
-import { INTERVALS, todayStr, newCard, learnedCard, isLearned, review, isDue, daysBetween } from './srs.js';
+import { INTERVALS, todayStr, newCard, learnedCard, isLearned, review, isDue, daysBetween, dayShuffleKey } from './srs.js';
 import * as store from './storage.js';
 import { makeSwipeable } from './swipe.js';
 import { streakDays, bestStreak, lastDays, forecast, accuracy } from './stats.js';
@@ -232,7 +232,8 @@ function dueList() {
   const today = todayStr();
   return Object.entries(state.progress)
     .filter(([id, c]) => isDue(c, today) && index.has(id))
-    .sort((a, b) => (a[1].due < b[1].due ? -1 : a[1].due > b[1].due ? 1 : a[1].stage - b[1].stage))
+    .map(([id]) => [id, dayShuffleKey(today, id)])
+    .sort((a, b) => a[1] - b[1]) // shuffled, in a new order every day
     .map(([id]) => id);
 }
 

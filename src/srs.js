@@ -65,3 +65,13 @@ export const KNOWN_STAGE = 5;
 export function knownCard(today = todayStr()) {
   return { stage: KNOWN_STAGE, due: addDays(today, INTERVALS[KNOWN_STAGE]), added: today, last: null, reviews: 0, lapses: 0, mastered: false, known: true };
 }
+
+// A pseudo-random number for (day, word): ordering by it shuffles the review queue differently every
+// day, but keeps the same order all day long, so the queue doesn't jump around on refresh or sync.
+export function dayShuffleKey(day, id) {
+  let h = 2166136261;
+  const s = `${day}|${id}`;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  h ^= h >>> 13; h = Math.imul(h, 0x5bd1e995); h ^= h >>> 15;
+  return h >>> 0;
+}

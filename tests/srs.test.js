@@ -69,3 +69,12 @@ test('"I know it" makes a learned card that is never due', () => {
   assert.equal(isDue(c, '2099-01-01'), false);
   assert.equal(isLearned(newCard(T)), false);
 });
+
+import { dayShuffleKey } from '../src/srs.js';
+test('review order is shuffled per day: same all day, different on another day', () => {
+  const ids = Array.from({ length: 40 }, (_, i) => 'kelly-' + (i + 1));
+  const order = (day) => [...ids].sort((a, b) => dayShuffleKey(day, a) - dayShuffleKey(day, b)).join();
+  assert.equal(order('2026-11-14'), order('2026-11-14'));
+  assert.notEqual(order('2026-11-14'), order('2026-11-15'));
+  assert.notEqual(order('2026-11-14'), ids.join());
+});
